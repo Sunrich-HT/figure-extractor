@@ -29,6 +29,17 @@ skill-aware agents can auto-load it. Point your agent's skill loader at this rep
 (or drop it into your skills directory) and it triggers on requests like
 "extract the figures from this arXiv paper" or "pull the charts out of this PDF".
 
+### Requirements & non-shell runtimes
+
+This is a **CLI tool** (Python + PyMuPDF) — "using it" means running the
+`figure-extractor` command in a shell. It is **not** an in-agent callable or a
+hosted service. It works in shell-capable agents (Claude Code, Codex, Kimi)
+after `pip install`. In runtimes with **no shell / no pip** (e.g. Notion Agent,
+browser-only agents) the CLI cannot run; `SKILL.md` defines a **precondition
+check** (`figure-extractor --help`) and a **degraded fallback** (link the
+original figure + faithful structured description + an explicit "bitmap not
+embedded, because…" note), which is an acceptable result rather than a failure.
+
 ## Install
 
 ```bash

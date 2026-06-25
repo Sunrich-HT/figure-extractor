@@ -6,30 +6,49 @@ description: >-
   user wants to pull figures / charts / diagrams / images out of a paper or web
   article, says "extract the figures from this PDF / arXiv paper / webpage",
   needs clean figure PNGs for slides, decks, or reuse, or finds that naive
-  embedded-image extraction returns broken fragments. Handles vector + raster +
-  text-label composite figures via caption detection and high-DPI page-crop
-  rendering, with a contact sheet for QA and a manual bbox-correction mode.
-  Keywords: extract figures from pdf, extract images from html, arxiv figure
-  extraction, paper figure extractor, pdf figure crop, pymupdf.
+  embedded-image extraction returns broken fragments. This is a command-line
+  tool (Python + PyMuPDF) that must be run in a shell; if your runtime has no
+  shell, see the degraded-mode fallback. Keywords: extract figures from pdf,
+  extract images from html, arxiv figure extraction, paper figure extractor,
+  pdf figure crop, pymupdf.
 ---
 
 # Figure Extractor Skill
 
 Use this skill when the user needs complete figures or images extracted from PDFs, arXiv papers, or HTML article pages.
 
-## Core rule
+## What this skill actually is (read first)
 
-Do **not** rely on embedded PDF image extraction alone. Many figures are composed of vector drawings, text labels, legends, and raster fragments. Embedded-image extraction often returns incomplete fragments.
+`figure-extractor` is a **command-line tool** (Python + PyMuPDF). "Using it" means
+running its CLI in a shell — e.g. `figure-extractor extract paper.pdf`. It is
+**not** an in-agent callable, a hosted service, or a "page" you activate, and it
+cannot run inside a runtime that has no shell or cannot install Python packages
+(e.g. Notion Agent, browser-only agents).
 
-## Setup
+**Invocation contract**
+- **Mechanism:** shell command `figure-extractor <subcommand> ...` (installed via `pip install -e .`).
+- **Input:** a local PDF/HTML path or a PDF/arXiv/HTML URL.
+- **Output:** PNG files + `manifest.json` + `contact_sheet.jpg` (+ optional `figures.zip`) written to `--out`.
+
+## Step 0 — precondition check (always do this first)
+
+Before you promise figure extraction, verify the tool is actually runnable in
+this environment:
 
 ```bash
-pip install -e .          # installs the `figure-extractor` CLI
-# or, dependencies only:
-pip install -r requirements.txt
+figure-extractor --help     # if this errors, or there is no shell, the tool is UNAVAILABLE
 ```
 
-## Preferred algorithm
+- **Available** (command runs) → follow *Preferred algorithm*.
+- **Unavailable** (no shell / not installed / sandboxed) → go to *Degraded mode*.
+  Not having the tool is **not** a failure and **not** a rule violation — degrade
+  gracefully and tell the user what you did.
+
+## Core rule (when the extractor is available)
+
+Do **not** rely on embedded PDF image extraction alone. Many figures are composed of vector drawings, text labels, legends, and raster fragments. Embedded-image extraction often returns incomplete fragments — prefer the caption-bbox render-crop pipeline below.
+
+## Preferred algorithm (requires a shell + the CLI)
 
 1. Resolve the input source:
    - local PDF
@@ -46,6 +65,34 @@ pip install -r requirements.txt
    - crop the rendered page by the inferred bbox;
    - generate PNGs, `manifest.json`, and `contact_sheet.jpg`.
 5. If one figure crop is wrong, use manual bbox correction mode.
+
+## Degraded mode (no shell / CLI unavailable / bitmaps unreachable)
+
+Use this when you **cannot** run `figure-extractor` (no shell, no Python/pip,
+sandboxed runtime), **or** when you can run nothing that retrieves the actual
+bitmap (e.g. the HTML strips `<img>` `src`, arXiv image URLs 404, page behind
+auth). This path is **explicitly allowed** and does not count as failing the
+"core rule":
+
+1. **Link the original.** Provide the direct figure URL, the source page, or the
+   arXiv PDF page number + figure number so the user can open the real image.
+2. **Describe faithfully.** Give a structured read of each figure from its
+   caption + surrounding text: what it shows, axes/panels/legend, key trend.
+   Never invent figure content you could not actually see.
+3. **Label the gap.** State plainly, e.g.:
+   `Bitmap not embedded — reason: no shell available` (or `image 404`,
+   `src stripped by sanitizer`, `auth-gated`). 
+
+Degraded output = original link + faithful structured description + an explicit
+"why the bitmap is missing" note. That is an acceptable result, not a violation.
+
+## Setup (shell environments only)
+
+```bash
+pip install -e .          # installs the `figure-extractor` CLI
+# or, dependencies only:
+pip install -r requirements.txt
+```
 
 ## Commands
 
@@ -69,4 +116,4 @@ figure-extractor crop paper.pdf --page 5 --bbox 295,245,556,475 --out fig04.png 
 
 ## Quality-control guidance
 
-Always inspect `contact_sheet.jpg`. If a figure includes surrounding body text or misses part of the figure, rerun `crop` with a manual bbox.
+When the extractor ran, always inspect `contact_sheet.jpg`. If a figure includes surrounding body text or misses part of the figure, rerun `crop` with a manual bbox.
