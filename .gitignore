@@ -28,3 +28,6 @@ figures/
 .DS_Store
 .idea/
 .vscode/
+
+# Local venv used for development
+.venv/

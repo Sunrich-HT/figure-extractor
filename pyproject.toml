@@ -1,9 +1,9 @@
 [project]
 name = "figure-extractor"
-version = "0.1.0"
-description = "Extract complete figures/images from PDF, arXiv, and HTML papers — an AI-agent skill (Claude Code, Codex, Kimi)."
+version = "0.2.0"
+description = "Extract complete figures and tables from PDF, arXiv, OpenReview, ACL and HTML papers — an AI-agent skill (Claude Code, Codex, Kimi)."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 keywords = [
   "figure-extraction", "extract-figures", "pdf", "arxiv", "html",
   "pymupdf", "agent-skill", "claude-skill", "claude-code", "codex", "kimi",
@@ -13,6 +13,9 @@ dependencies = [
   "Pillow>=10.0.0",
   "beautifulsoup4>=4.12.0",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
 
 [project.scripts]
 figure-extractor = "figure_extractor.cli:main"

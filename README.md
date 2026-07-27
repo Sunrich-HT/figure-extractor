@@ -1,26 +1,69 @@
 # figure-extractor
 
-**Extract complete figures and images from PDF, arXiv, and HTML papers.** A packaged
-**AI-agent skill** (works with **Claude Code**, **Codex**, **Kimi**, and any
+**Extract complete figures _and tables_ from PDF, arXiv, OpenReview, ACL and HTML papers.**
+A packaged **AI-agent skill** (works with **Claude Code**, **Codex**, **Kimi**, and any
 skill-aware coding agent) plus a standalone `figure-extractor` CLI.
 
 > Also known as: *paper figure extractor*, *pdf figure extractor*, *arxiv figure
 > extraction*, *extract figures from pdf*, *extract images from html article*.
 
-It supports:
+Built for research reading, where a figure cropped wrong is worse than one that
+is missing — a wrong crop still looks like a result.
 
-- Local PDF files
-- PDF URLs (including arXiv `/abs/` → `/pdf/` normalization)
-- HTML article URLs or local HTML files with embedded `<figure>`, `<img>`, `srcset`, lazy-loaded images
+```bash
+pip install -e .
+figure-extractor extract https://arxiv.org/abs/1512.03385 --out ./figures --zip
+```
 
-The key design choice is: **do not rely on embedded PDF image extraction alone**. Many academic figures are composed of vector drawings, text labels, legends, and raster fragments. Instead, this tool uses:
+## Sources
 
-1. Figure caption detection (`Figure 1.`, `Fig. 1`, `FIGURE 1`)
-2. Figure-region bbox inference from drawing/image/text primitives
-3. High-DPI page rendering with PyMuPDF
-4. Crop from the rendered page
-5. Contact sheet QA
-6. Manifest + ZIP output
+| Source | Handling |
+|---|---|
+| Local PDF / HTML file | direct |
+| arXiv `/abs/`, `/pdf/` | normalized to the PDF |
+| arXiv `/html/` | HTML path, keeps the original figure assets |
+| OpenReview `/forum?id=` | normalized to `/pdf?id=` |
+| ACL Anthology landing page | normalized to `.pdf` |
+| bioRxiv / medRxiv | normalized to `.full.pdf` |
+| Any article URL | `<figure>`, `<img>`, `<picture>`, `srcset`, lazy attrs |
+
+Requests are sent with a browser user agent, and a source that cannot be
+retrieved reports **why** — an HTTP 403 says it was refused, rather than being
+silently reinterpreted as an HTML page.
+
+## What it does
+
+The key design choice is: **do not rely on embedded PDF image extraction alone.**
+Many academic figures are vector drawings, text labels, legends and raster
+fragments; embedded-image extraction returns pieces. Instead:
+
+1. **Caption detection** — `Figure 1.`, `Fig. 12:`, `Table 3.`, and the forms that
+   really occur in papers: chapter-scoped `Figure 2.1`, appendix `Figure B.1`,
+   supplementary `Table S3`.
+2. **Column-aware bbox inference** — the page's column grid is recovered from
+   text geometry, and each crop is confined to the band its caption occupies, so
+   a right-column figure cannot absorb the left column. A caption that spans the
+   gutter marks a full-width figure.
+3. **Ownership rules** — a crop may never contain another caption, and content
+   belongs to the caption nearest to it.
+4. **High-DPI render and crop** with PyMuPDF (300 dpi default).
+5. **Quality scoring** — every crop is `ok` / `suspect` / `failed` with reasons.
+6. **Contact sheet, manifest, ZIP.**
+
+Tables are first-class: detected structurally, including tables that are pure
+text with rules. HTML tables, which have no bitmap to crop, are exported as
+Markdown so the numbers survive.
+
+## Measured behaviour
+
+Recall and crop quality on two papers with opposite layouts, checked by eye
+against the rendered contact sheets:
+
+| Paper | Layout | Figures | Tables | Crop status |
+|---|---|---|---|---|
+| ResNet (`1512.03385`) | 2-column CVPR | 7 / 7 | 14 / 14 | 21 ok · 0 suspect · 0 failed |
+| Transformer (`1706.03762`) | single column | 5 / 5 | 4 / 4 | 9 ok · 0 suspect · 0 failed |
+| KAN (`2404.19756`, arXiv HTML) | HTML | 25 images | 7 text tables | 32 / 32 containers accounted for |
 
 ## Use as an agent skill
 
@@ -29,86 +72,76 @@ skill-aware agents can auto-load it. Point your agent's skill loader at this rep
 (or drop it into your skills directory) and it triggers on requests like
 "extract the figures from this arXiv paper" or "pull the charts out of this PDF".
 
-### Requirements & non-shell runtimes
-
-This is a **CLI tool** (Python + PyMuPDF) — "using it" means running the
-`figure-extractor` command in a shell. It is **not** an in-agent callable or a
-hosted service. It works in shell-capable agents (Claude Code, Codex, Kimi)
-after `pip install`. In runtimes with **no shell / no pip** (e.g. Notion Agent,
-browser-only agents) the CLI cannot run; `SKILL.md` defines a **precondition
-check** (`figure-extractor --help`) and a **degraded fallback** (link the
-original figure + faithful structured description + an explicit "bitmap not
-embedded, because…" note), which is an acceptable result rather than a failure.
-
-## Install
+## Commands
 
 ```bash
-pip install -e .
-```
-
-or just install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-## Usage
-
-### Local PDF
-
-```bash
+# Local PDF, PDF URL, arXiv abs/pdf/html, OpenReview forum, ACL Anthology
 figure-extractor extract paper.pdf --out ./figures --dpi 300 --zip
+figure-extractor extract https://arxiv.org/abs/2404.19756 --out ./figures
+figure-extractor extract https://openreview.net/forum?id=XXXX --out ./figures
+figure-extractor extract https://example.com/article --prefer html --fallback pdf
+
+# Only figures, skip tables
+figure-extractor extract paper.pdf --kinds figure
+
+# Only the crops most likely to be load-bearing
+figure-extractor extract paper.pdf --tiers A
+
+# Manual bbox correction when a crop is wrong
+figure-extractor crop paper.pdf --page 5 --bbox 295,245,556,475 --out fig04.png
 ```
 
-### PDF URL
+## Output
 
-```bash
-figure-extractor extract https://arxiv.org/pdf/2606.23443 --out ./figures --dpi 300 --zip
 ```
-
-### arXiv abs URL
-
-```bash
-figure-extractor extract https://arxiv.org/abs/2606.23443 --out ./figures --dpi 300 --zip
-```
-
-### HTML article URL
-
-```bash
-figure-extractor extract https://example.com/article --out ./figures --prefer html --fallback pdf
-```
-
-### Manual crop correction
-
-```bash
-figure-extractor crop paper.pdf --page 5 --bbox 295,245,556,475 --out fig04.png --dpi 300
-```
-
-## Outputs
-
-```text
 figures/
-├── fig01_p03.png
-├── fig02_p04.png
-├── ...
-├── manifest.json
-├── contact_sheet.jpg
-└── figures.zip
+  fig1_p01.png          named by the paper's own numbering
+  fig2-1_p03.png        chapter-scoped numbers keep their identity
+  figB-1_p14.png        appendix labels too
+  tab3_p06.png
+  tab1.md               HTML text tables, exported as Markdown
+  contact_sheet.jpg     QA sheet; suspect/failed crops flagged in colour
+  manifest.json
+  figures.zip           with --zip
 ```
 
-## When to use which mode
+`manifest.json` records, per item: label, kind, page, caption, bbox, column
+layout, how often the body text refers to it, a suggested triage tier, the
+quality status, and the reasons behind it.
 
-- `html`: best when the paper page exposes high-res figure image files.
-- `pdf`: best when only a PDF is available.
-- `auto`: tries HTML first for HTML URLs, then falls back to PDF if a PDF link is found.
-- `manual crop`: use for single figures whose bbox needs correction.
+### Triage tiers
 
-## Known limitations
+Reading a paper does not require every figure at 300 dpi. Each item gets a
+suggested tier from how often the body cites it and whether it is the paper's
+opening figure:
 
-- Multi-page figures and captions separated from figures may require manual correction.
-- Publisher pages behind login or anti-bot protection may need browser/session-based download.
-- PDF bbox inference is heuristic; always inspect `contact_sheet.jpg`.
+- **A** — likely load-bearing: cited repeatedly, or the first figure.
+- **B** — supporting evidence worth keeping.
+- **C** — keep the page reference; a crop is probably not worth it.
+
+These are suggestions derived from citation counts, not judgements about the
+argument. Use `--tiers A,B` to skip the long tail.
+
+## Quality control
+
+Always open `contact_sheet.jpg`. Crops marked `suspect` or `failed` are labelled
+in orange and red. If one is wrong, fix it with `crop --bbox`; the bbox in
+`manifest.json` is your starting point.
+
+`failed` means no graphics were found for that caption, or the box produced was
+degenerate — not that the figure does not exist.
+
+## Development
+
+```bash
+pip install -e ".[dev]"
+pytest -q
+```
+
+The suite builds synthetic PDFs and asserts geometry: that a two-column page is
+detected as such, that a crop stays inside its column, that stacked figures do
+not claim each other's content, and that tables are found at all.
 
 ## License
 
-[MIT](LICENSE)
+MIT
