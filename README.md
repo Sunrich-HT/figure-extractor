@@ -37,9 +37,15 @@ The key design choice is: **do not rely on embedded PDF image extraction alone.*
 Many academic figures are vector drawings, text labels, legends and raster
 fragments; embedded-image extraction returns pieces. Instead:
 
-1. **Caption detection** — `Figure 1.`, `Fig. 12:`, `Table 3.`, and the forms that
-   really occur in papers: chapter-scoped `Figure 2.1`, appendix `Figure B.1`,
-   supplementary `Table S3`.
+1. **Caption detection** — exhaustive by design, because which exhibits matter
+   is a reading judgement, not a retrieval filter. Covers `Figure 1.`,
+   `Fig. 12:`, chapter-scoped `Figure 2.1`, appendix `Figure B.1`,
+   journal prefixes `Extended Data Fig. 1` and `Supplementary Table S3`,
+   Nature's `Fig. 1 | Title` separator, kinds beyond figures and tables
+   (`Table`, `Algorithm`, `Scheme`, `Chart`, `Listing`, `Box`, `Exhibit`,
+   `Panel`, `Plate`, `Movie`), and CJK labels (`图 1`, `表 2`, `図 1`).
+   Journal prefixes are part of an exhibit's identity, so `Extended Data Fig. 1`
+   never overwrites `Fig. 1`.
 2. **Column-aware bbox inference** — the page's column grid is recovered from
    text geometry, and each crop is confined to the band its caption occupies, so
    a right-column figure cannot absorb the left column. A caption that spans the
@@ -51,8 +57,14 @@ fragments; embedded-image extraction returns pieces. Instead:
 6. **Contact sheet, manifest, ZIP.**
 
 Tables are first-class: detected structurally, including tables that are pure
-text with rules. HTML tables, which have no bitmap to crop, are exported as
-Markdown so the numbers survive.
+text with rules. On the HTML side every container form is handled — `<img>`,
+`<picture>`/`srcset`, lazy-load attributes, inline `data:` base64, inline
+`<svg>`, and `<object>`/`<embed>`. HTML tables, which have no bitmap to crop,
+are exported as Markdown so the numbers survive.
+
+**Extraction is exhaustive; selection is not.** Everything the document labels
+comes out. The suggested tier is a signal to help you choose what to read, and
+it filters nothing unless you ask it to.
 
 ## Measured behaviour
 
@@ -117,10 +129,12 @@ opening figure:
 
 - **A** — likely load-bearing: cited repeatedly, or the first figure.
 - **B** — supporting evidence worth keeping.
-- **C** — keep the page reference; a crop is probably not worth it.
+- **C** — rarely cited; a crop is probably not worth reading time.
 
-These are suggestions derived from citation counts, not judgements about the
-argument. Use `--tiers A,B` to skip the long tail.
+These come from citation counts alone. Whether a figure carries a paper's
+argument depends on the argument, which a counter cannot see — treat the tier as
+a starting point for triage, never as a verdict. Nothing is filtered by default;
+pass `--tiers A,B` if you explicitly want to skip the long tail.
 
 ## Quality control
 

@@ -48,3 +48,52 @@ def test_reference_counting():
     body = "As Figure 3 shows ... we revisit Fig. 3 later ... unlike Figure 4."
     assert count_references(body, Label("figure", "3")) == 2
     assert count_references(body, Label("figure", "4")) == 1
+
+
+def test_journal_prefixes_are_part_of_the_identity():
+    """`Extended Data Fig. 1` is not `Fig. 1`, and must not overwrite it."""
+    plain = parse_label("Figure 1: body figure.")
+    extended = parse_label("Extended Data Fig. 1 | different figure.")
+    supp = parse_label("Supplementary Figure 1: another one.")
+    assert plain and extended and supp
+    assert len({plain.slug, extended.slug, supp.slug}) == 3
+
+
+def test_kinds_beyond_figures_and_tables():
+    for text, kind in [
+        ("Scheme 1. Synthetic route.", "scheme"),
+        ("Algorithm 1 Training loop", "algorithm"),
+        ("Listing 1: Reference implementation.", "listing"),
+        ("Box 1 | Key definitions.", "box"),
+        ("Chart 2 | Market share.", "chart"),
+    ]:
+        label = parse_label(text)
+        assert label is not None and label.kind == kind, text
+
+
+def test_nature_pipe_separator_and_cjk_labels():
+    assert parse_label("Fig. 1 | Overview of the method.").display == "Figure 1"
+    assert parse_label("图 1: 模型总体架构").kind == "figure"
+    assert parse_label("表 2. 消融实验结果").kind == "table"
+
+
+def test_body_exhibits_sort_before_supplementary():
+    labels = [parse_label(t) for t in (
+        "Supplementary Figure 1: s.", "Figure 2: b.", "Extended Data Fig. 1 | e.", "Figure 1: a.",
+    )]
+    ordered = [lab.display for lab in sorted(labels, key=lambda x: x.sort_key)]
+    assert ordered == ["Figure 1", "Figure 2", "Extended Data Figure 1", "Supplementary Figure 1"]
+
+
+def test_panel_reference_is_not_a_caption():
+    """Regression: a verb hidden behind a panel reference slipped through.
+
+    `Fig. 6 (middle) shows ...` begins with the label and its first token is
+    `(middle)`, so checking only the first word accepted it as a caption and
+    invented an eighth figure in a seven-figure paper.
+    """
+    assert parse_label("Fig. 6 (middle) shows the behaviors of ResNets.") is None
+    assert parse_label("Fig. 4 (a) illustrates the pipeline") is None
+    assert parse_label("Table 1 in the appendix reports full numbers") is None
+    # ...while a genuinely space-separated caption still parses.
+    assert parse_label("Algorithm 1 Training loop") is not None

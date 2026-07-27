@@ -27,7 +27,7 @@ from .captions import parse_label
 from .contact_sheet import make_contact_sheet
 from .utils import USER_AGENT
 
-IMG_ATTRS = ["src", "data-src", "data-original", "data-lazy-src", "data-hires", "data-full", "data-image"]
+IMG_ATTRS = ["src", "data", "data-src", "data-original", "data-lazy-src", "data-hires", "data-full", "data-image"]
 
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "image/svg+xml", "image/avif"}
 EXT_BY_TYPE = {
@@ -42,6 +42,18 @@ EXT_BY_TYPE = {
 
 # Decorative furniture that is never a paper figure.
 JUNK_URL_HINTS = ("pixel", "tracking", "beacon", "spacer", "1x1", "logo", "avatar", "icon", "badge", "sprite")
+
+
+def _short_url(url: str, limit: int = 120) -> str:
+    """A URL safe to put in a report.
+
+    Inline `data:` images can be hundreds of kilobytes; echoing one whole into
+    the manifest makes the report unreadable and larger than the figure.
+    """
+    if url.startswith("data:"):
+        head = url.split(",", 1)[0]
+        return f"{head},<{len(url)} bytes inline>"
+    return url if len(url) <= limit else url[: limit - 3] + "..."
 
 
 def _best_from_srcset(srcset: str) -> str | None:
@@ -148,6 +160,7 @@ def extract_html_figures(
     seen_urls: set[str] = set()
     seen_bytes: set[bytes] = set()
     tables_md: list[dict] = []
+    inline_svgs: list[dict] = []
     fallback_index = 0
 
     # Every container is accounted for. A container that yields no file must say
@@ -159,6 +172,33 @@ def extract_html_figures(
         if img is None:
             picture = container.find("picture")
             img = picture.find("img") if picture else None
+        if img is None:
+            # Inline vector art: the figure is the markup, with no URL to fetch.
+            # Serialising it keeps the graphic instead of recording a loss.
+            svg = container.find("svg")
+            if svg is not None:
+                caption = _caption_of(container)
+                label = parse_label(caption)
+                stem = label.slug if label else f"inlinesvg{len(inline_svgs) + 1:02d}"
+                dest = out_dir / f"{stem}.svg"
+                dest.write_text(str(svg), encoding="utf-8")
+                inline_svgs.append({
+                    "label": label.display if label else None,
+                    "kind": label.kind if label else "figure",
+                    "number": label.number if label else None,
+                    "caption": caption,
+                    "output": str(dest),
+                    "method": "html-inline-svg",
+                    "status": "ok",
+                    "format": "svg",
+                })
+                continue
+            # <object>/<embed> point at an external asset the same way <img>
+            # does, so hand it to the normal download path below.
+            embed = container.find(["object", "embed"])
+            if embed is not None and (embed.get("data") or embed.get("src")):
+                img = embed
+
         if img is None:
             caption = _caption_of(container)
             label = parse_label(caption)
@@ -198,15 +238,15 @@ def extract_html_figures(
 
         img_url = urljoin(base_url, raw_url) if base_url else raw_url
         if not img_url.lower().startswith(("http://", "https://", "data:")):
-            figures.append({"image_url": img_url, "status": "failed", "quality_reasons": ["unresolved relative URL (no base)"]})
+            figures.append({"image_url": _short_url(img_url), "status": "failed", "quality_reasons": ["unresolved relative URL (no base)"]})
             continue
         if img_url in seen_urls:
-            dropped.append({"image_url": img_url, "reason": "same image URL already taken by an earlier container"})
+            dropped.append({"image_url": _short_url(img_url), "reason": "same image URL already taken by an earlier container"})
             continue
         seen_urls.add(img_url)
         junk = next((h for h in JUNK_URL_HINTS if h in img_url.lower()), None)
         if junk:
-            dropped.append({"image_url": img_url, "reason": f"URL looks like page furniture (matched {junk!r})"})
+            dropped.append({"image_url": _short_url(img_url), "reason": f"URL looks like page furniture (matched {junk!r})"})
             continue
 
         caption = _caption_of(container)
@@ -224,7 +264,7 @@ def extract_html_figures(
             "kind": label.kind if label else "unknown",
             "number": label.number if label else None,
             "caption": caption,
-            "image_url": img_url,
+            "image_url": _short_url(img_url),
             "method": f"html-{strategy}",
         }
 
@@ -271,11 +311,16 @@ def extract_html_figures(
         figures.append(entry)
 
     figures.extend(tables_md)
-    rendered = [f for f in figures if f.get("status") == "ok" and f.get("format") != "markdown"]
+    figures.extend(inline_svgs)
+    rendered = [
+        f for f in figures
+        if f.get("status") == "ok" and f.get("format") not in {"markdown", "svg"}
+    ]
     counts = {
         "containers_found": len(containers),
         "considered": len(figures),
         "text_tables": len(tables_md),
+        "inline_svgs": len(inline_svgs),
         "rendered": len(rendered),
         "ok": len(rendered),
         "failed": sum(1 for f in figures if f.get("status") == "failed"),

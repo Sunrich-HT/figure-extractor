@@ -18,7 +18,7 @@ from pathlib import Path
 
 import fitz
 
-from .captions import Label, count_references, parse_label
+from .captions import ALL_KINDS, Label, count_references, parse_label
 from .contact_sheet import make_contact_sheet
 from .layout import (
     LABEL, TABULAR, Column, PageLayout, analyze, apply_consensus,
@@ -498,7 +498,7 @@ def extract_pdf_figures(
     margin: float = 8,
     make_sheet: bool = True,
     make_zip: bool = True,
-    kinds: tuple[str, ...] = ("figure", "table", "algorithm"),
+    kinds: tuple[str, ...] = ALL_KINDS,
     tiers: tuple[str, ...] = ("A", "B", "C"),
 ) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)

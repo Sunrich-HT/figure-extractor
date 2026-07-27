@@ -59,7 +59,8 @@ Do **not** rely on embedded PDF image extraction alone. Many figures are compose
 2. If HTML is available, first try to extract original figure images from `<figure>`, `<img>`, `<picture>`, `srcset`, and lazy-load attributes.
 3. If HTML does not provide enough high-quality figures, locate or download the PDF.
 4. For PDFs:
-   - locate every caption, including `Figure 2.1`, `Figure B.1`, `Table S3`;
+   - locate every caption: `Figure 2.1`, `Figure B.1`, `Extended Data Fig. 1`,
+     `Supplementary Table S3`, `Scheme`/`Algorithm`/`Listing`/`Box`, `图 1`;
    - recover the page's column grid and confine each crop to its caption's band;
    - grow the bbox from graphic primitives, stopping at other captions and prose;
    - render the page at 300 dpi and crop;
@@ -120,8 +121,9 @@ figure-extractor crop paper.pdf --page 5 --bbox 295,245,556,475 --out fig04.png 
 - `margin`: 8 PDF points
 - `prefer`: `auto`
 - `fallback`: `pdf`
-- `kinds`: `figure,table`
-- `tiers`: `A,B,C` (use `--tiers A,B` to skip the long tail)
+- `kinds`: `all` — extraction is exhaustive by default
+- `tiers`: `A,B,C` — nothing filtered by default; the tier is a triage signal,
+  not a judgement about which exhibits carry the argument
 - `contact_sheet`: true
 
 ## Quality-control guidance

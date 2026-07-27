@@ -9,9 +9,9 @@ from urllib.parse import urljoin
 
 from .html_extractor import extract_html_figures
 from .pdf_cropper import crop_manual, extract_pdf_figures
+from .captions import ALL_KINDS
 from .utils import HTML, PDF, SourceError, ensure_local_source, is_url
 
-ALL_KINDS = ("figure", "table", "algorithm")
 ALL_TIERS = ("A", "B", "C")
 
 
@@ -42,6 +42,8 @@ def _discover_pdf_link(html_path: Path, base_url: str | None) -> str | None:
 
 
 def _parse_csv(value: str, allowed: tuple[str, ...], what: str) -> tuple[str, ...]:
+    if value.strip().lower() == "all":
+        return allowed
     items = tuple(v.strip() for v in value.split(",") if v.strip())
     bad = [i for i in items if i not in allowed]
     if bad:
@@ -132,10 +134,18 @@ def build_parser() -> argparse.ArgumentParser:
     ex.add_argument("--margin", type=float, default=8)
     ex.add_argument("--prefer", choices=["auto", "html", "pdf"], default="auto")
     ex.add_argument("--fallback", choices=["none", "pdf"], default="pdf")
-    ex.add_argument("--kinds", default="figure,table",
-                    help=f"Comma-separated subset of {','.join(ALL_KINDS)} (default: figure,table)")
-    ex.add_argument("--tiers", default="A,B,C",
-                    help="Comma-separated triage tiers to render (default: A,B,C)")
+    ex.add_argument(
+        "--kinds", default="all",
+        help=f"Comma-separated subset of {', '.join(ALL_KINDS)}, or 'all' (default: all)",
+    )
+    ex.add_argument(
+        "--tiers", default="A,B,C",
+        help=(
+            "Render only these suggested tiers (default: all). The tier is a "
+            "signal derived from how often the body cites an exhibit, not a "
+            "judgement about the argument — extraction is exhaustive by default."
+        ),
+    )
     ex.add_argument("--zip", action="store_true")
     ex.set_defaults(func=cmd_extract)
 

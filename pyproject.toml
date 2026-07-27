@@ -1,6 +1,6 @@
 [project]
 name = "figure-extractor"
-version = "0.2.0"
+version = "0.3.0"
 description = "Extract complete figures and tables from PDF, arXiv, OpenReview, ACL and HTML papers — an AI-agent skill (Claude Code, Codex, Kimi)."
 readme = "README.md"
 requires-python = ">=3.10"
