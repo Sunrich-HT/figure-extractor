@@ -91,13 +91,29 @@ auth). This path is **explicitly allowed** and does not count as failing the
 Degraded output = original link + faithful structured description + an explicit
 "why the bitmap is missing" note. That is an acceptable result, not a violation.
 
-## Setup (shell environments only)
+## Setup
+
+**A missing package is not a reason to degrade — install it.** The dependency
+set is small (PyMuPDF, Pillow, beautifulsoup4); no GPU, no model, no service.
 
 ```bash
-pip install -e .          # installs the `figure-extractor` CLI
-# or, dependencies only:
-pip install -r requirements.txt
+pip install git+https://github.com/Sunrich-HT/figure-extractor
 ```
+
+From a checkout: `pip install -e .`
+
+## Have a PDF? Run it on the PDF.
+
+If the user attached a PDF, or you can download one, that is the simplest and
+most reliable path. **Do not start with HTML or a browser.**
+
+```bash
+figure-extractor extract <pdf-path> --out ./figures --dpi 300 --zip
+```
+
+Only when no PDF is obtainable should you try the HTML route. Note that some
+environments' HTML fetchers strip `<img src>`, leaving text only — when that
+happens, stop working the HTML and go back to fetching the PDF.
 
 ## Commands
 
