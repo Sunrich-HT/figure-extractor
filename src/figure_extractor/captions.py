@@ -183,6 +183,14 @@ def parse_label(text: str) -> Label | None:
         return None
     if tail.startswith("("):
         return None  # panel reference: "Fig. 6 (middle) ...", "Fig. 4 (a) ..."
+
+    # A caption's title starts like a title — a capital, a digit, or CJK. A
+    # cross reference continues the sentence, so the next word is a lowercase
+    # verb or preposition. This is general; the verb list below is not, and it
+    # let "Figure 3 reveals similar patterns" through because "reveals" simply
+    # was not on it.
+    if tail[0].islower() and tail[0].isascii():
+        return None
     if any(_XREF_TAIL.match(word) for word in tail.split()[:6]):
         return None
     return label

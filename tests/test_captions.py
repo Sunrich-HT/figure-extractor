@@ -97,3 +97,26 @@ def test_panel_reference_is_not_a_caption():
     assert parse_label("Table 1 in the appendix reports full numbers") is None
     # ...while a genuinely space-separated caption still parses.
     assert parse_label("Algorithm 1 Training loop") is not None
+
+
+def test_a_lowercase_continuation_is_a_cross_reference():
+    """Found in the wild: "Figure 3 reveals ..." was accepted as a caption.
+
+    A verb blacklist is inherently incomplete. A caption's title starts like a
+    title — capital, digit or CJK — while a cross reference continues the
+    sentence with a lowercase word.
+    """
+    for text in (
+        "Figure 3 reveals similar qualitative patterns in real data",
+        "Figure 2 exhibits the same trend",
+        "Table 5 tabulates the ablations",
+        "Figure 1 and Figure 2 together imply",
+    ):
+        assert parse_label(text) is None, text
+
+    for text in (
+        "Algorithm 1 Training loop",
+        "Fig. 1 Overview of the method",
+        "图 1 模型总体架构",
+    ):
+        assert parse_label(text) is not None, text
