@@ -265,3 +265,59 @@ runpy.run_path({str(STANDALONE)!r}, run_name='__main__')
 """)
     assert r.returncode == 0, r.stderr
     assert (out / "tab1.md").exists()
+
+
+# --------------------------------------------------------------------------
+# Rung 5: a runtime with no rasterizer at all
+# --------------------------------------------------------------------------
+
+NO_RASTER = ROOT / "bootstrap" / "no_rasterizer_extractor.py"
+
+
+def _embedded_no_rasterizer() -> str:
+    text = SKILL.read_text(encoding="utf-8")
+    start = text.index("<!-- BEGIN EMBEDDED NO-RASTERIZER EXTRACTOR")
+    end = text.index("<!-- END EMBEDDED NO-RASTERIZER EXTRACTOR -->")
+    body = text[start:end].split("```python", 1)[1]
+    return body.rsplit("```", 1)[0].strip("\n")
+
+
+def test_skill_carries_the_no_rasterizer_build_verbatim():
+    assert _embedded_no_rasterizer() == NO_RASTER.read_text(encoding="utf-8").rstrip("\n")
+
+
+def test_cropping_needs_no_rasterizer(tmp_path):
+    """pypdf cannot render a pixel, but CropBox still yields the figure.
+
+    Denying fitz proves the fallback stands on its own rather than quietly
+    leaning on the library it exists to replace.
+    """
+    pytest.importorskip("pypdf")
+    pdf = tmp_path / "paper.pdf"
+    _make_pdf(pdf)
+    script = tmp_path / "fe_norender.py"
+    script.write_text(_embedded_no_rasterizer(), encoding="utf-8")
+    out = tmp_path / "out"
+
+    r = _run(f"""
+import sys
+class _Deny:
+    def find_spec(self, name, path=None, target=None):
+        if name.split('.')[0] in {{'fitz', 'pymupdf', 'PIL'}}:
+            raise ImportError(name)
+        return None
+sys.meta_path.insert(0, _Deny())
+import runpy
+sys.argv = ['fe_norender', {str(pdf)!r}, {str(out)!r}]
+runpy.run_path({str(script)!r}, run_name='__main__')
+""")
+    assert r.returncode == 0, r.stderr
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["extractor"] == "no-rasterizer-pypdf"
+    item = manifest["figures"][0]
+    assert item["status"] == "ok", item
+    crop = Path(item["output"])
+    assert crop.suffix == ".pdf" and crop.stat().st_size > 0
+    # The crop must be a real region of the page, not the whole page back again.
+    x0, y0, x1, y1 = item["bbox"]
+    assert 0 < (y1 - y0) < 792, item["bbox"]

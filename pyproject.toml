@@ -15,7 +15,7 @@ dependencies = [
 [project.optional-dependencies]
 # HTML article sources only; the PDF path deliberately needs nothing here.
 html = ["beautifulsoup4>=4.12.0"]
-dev = ["pytest>=7.0", "beautifulsoup4>=4.12.0"]
+dev = ["pytest>=7.0", "beautifulsoup4>=4.12.0", "pypdf>=4.0.0"]
 
 [project.scripts]
 figure-extractor = "figure_extractor.cli:main"

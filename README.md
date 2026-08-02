@@ -33,9 +33,19 @@ is a single generated file carrying the entire pipeline, PDF and HTML. Copy it
 and run it. It is built from `src/` by `python tools/build_standalone.py`, and a
 test asserts the two never drift apart.
 
-And when even this repo is unreachable, the reduced extractor is printed inside
-[`SKILL.md`](SKILL.md) itself: an agent that can read the skill can write it out
-and run it. See *No repo, no network* there.
+And when even this repo is unreachable, two fallback extractors are printed
+inside [`SKILL.md`](SKILL.md) itself, so an agent that can read the skill can
+write one out and run it:
+
+- **PyMuPDF present, repo absent** — a reduced build (caption anchoring, column
+  band, side selection, prose barriers), which flags what it cannot judge.
+- **No rasterizer at all** — with only `pypdf`, pages are *cropped* rather than
+  rendered: the CropBox is set to the exhibit and a one-page vector PDF is
+  written. On arXiv 2607.28146 it finds 16 of 21 exhibits and 14 of those crops
+  fully contain the figure, looser than the real pipeline and honest about it.
+
+A code-interpreter or notebook tool is a shell for this purpose; "no bash" is
+not "no way to run code".
 
 Network is needed only to *fetch* a URL. A runtime with no DNS can still crop a
 PDF already on disk, or a **saved HTML page whose images are inline `data:`

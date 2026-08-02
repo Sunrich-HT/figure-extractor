@@ -23,10 +23,14 @@ DEST = ROOT / "standalone" / "figure_extractor_standalone.py"
 # The reduced extractor is embedded in SKILL.md itself, because a runtime with
 # no network cannot fetch any file from this repo — including the standalone.
 BOOTSTRAP = ROOT / "bootstrap" / "minimal_extractor.py"
+NO_RASTER = ROOT / "bootstrap" / "no_rasterizer_extractor.py"
 SKILL = ROOT / "SKILL.md"
 BEGIN = ("<!-- BEGIN EMBEDDED EXTRACTOR: generated from "
          "bootstrap/minimal_extractor.py by tools/build_standalone.py -->")
 END = "<!-- END EMBEDDED EXTRACTOR -->"
+BEGIN_NR = ("<!-- BEGIN EMBEDDED NO-RASTERIZER EXTRACTOR: generated from "
+            "bootstrap/no_rasterizer_extractor.py by tools/build_standalone.py -->")
+END_NR = "<!-- END EMBEDDED NO-RASTERIZER EXTRACTOR -->"
 
 # Dependency order: later modules may use names defined by earlier ones.
 # html_extractor is included now that it parses with the standard library.
@@ -178,6 +182,11 @@ def build_skill() -> str:
     start, end = text.index(BEGIN), text.index(END)
     code = BOOTSTRAP.read_text(encoding="utf-8").rstrip("\n")
     block = f"{BEGIN}\n\n```python\n{code}\n```\n\n"
+    text = text[:start] + block + text[end:]
+
+    start, end = text.index(BEGIN_NR), text.index(END_NR)
+    code = NO_RASTER.read_text(encoding="utf-8").rstrip("\n")
+    block = f"{BEGIN_NR}\n\n```python\n{code}\n```\n\n"
     return text[:start] + block + text[end:]
 
 
