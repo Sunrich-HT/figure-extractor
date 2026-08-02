@@ -17,8 +17,8 @@ figure-extractor extract https://arxiv.org/abs/1512.03385 --out ./figures --zip
 
 ## Runs without pip, network, or anything but PyMuPDF
 
-**Cropping a PDF requires PyMuPDF and nothing else** — no Pillow, no
-beautifulsoup4, and no package install. That matters in sandboxes, which
+**The whole pipeline requires PyMuPDF and nothing else** — PDFs *and* HTML, no
+Pillow, no beautifulsoup4, no package install. That matters in sandboxes, which
 routinely ship PyMuPDF but cannot reach PyPI or GitHub. Three ways to run, in
 order of preference:
 
@@ -29,19 +29,26 @@ python standalone/figure_extractor_standalone.py extract paper.pdf   # one file,
 ```
 
 [`standalone/figure_extractor_standalone.py`](standalone/figure_extractor_standalone.py)
-is a single generated file carrying the entire PDF path. Copy it next to a PDF
+is a single generated file carrying the entire pipeline, PDF and HTML. Copy it
 and run it. It is built from `src/` by `python tools/build_standalone.py`, and a
 test asserts the two never drift apart.
 
-Network is needed only to *fetch* a URL; a runtime with no DNS can still crop a
-PDF already on disk, including one a user just uploaded. `beautifulsoup4` is
-needed only for HTML article sources — install it with `pip install -e ".[html]"`.
+And when even this repo is unreachable, the reduced extractor is printed inside
+[`SKILL.md`](SKILL.md) itself: an agent that can read the skill can write it out
+and run it. See *No repo, no network* there.
+
+Network is needed only to *fetch* a URL. A runtime with no DNS can still crop a
+PDF already on disk, or a **saved HTML page whose images are inline `data:`
+URIs** — both need nothing but the bytes already present. `beautifulsoup4` is
+optional and only makes HTML parsing more forgiving; without it the standard
+library handles the markup.
 
 ## Sources
 
 | Source | Handling |
 |---|---|
-| Local PDF / HTML file | direct |
+| Local PDF / HTML file | direct; a saved page's inline `data:` images need no network |
+| Browser PDF viewer | `?file=` / `#file=` / `?url=` unwrapped to the real PDF (PDF.js, Chrome's viewer, Google Docs viewer) |
 | arXiv `/abs/`, `/pdf/` | normalized to the PDF |
 | arXiv `/html/` | HTML path, keeps the original figure assets |
 | OpenReview `/forum?id=` | normalized to `/pdf?id=` |

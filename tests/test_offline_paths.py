@@ -196,3 +196,72 @@ runpy.run_path({str(script)!r}, run_name='__main__')
     item = manifest["figures"][0]
     assert item["status"] != "ok", item
     assert item.get("quality_reasons"), item
+
+
+def test_html_is_parsed_without_beautifulsoup(tmp_path):
+    """A saved page with inline images needs no network and no bs4.
+
+    That combination is the sandbox case exactly: the user pastes a page they
+    already have, and nothing can be fetched.
+    """
+    import base64
+
+    doc = fitz.open()
+    page = doc.new_page(width=420, height=260)
+    page.draw_rect(fitz.Rect(20, 20, 400, 240), color=(0, 0, 0), fill=(0.3, 0.5, 0.8))
+    # Enough detail that the PNG clears the icon-size filter honestly: a flat
+    # rectangle compresses to under a kilobyte and is dropped as a spacer.
+    for i in range(12):
+        page.draw_rect(fitz.Rect(30 + i * 30, 220 - i * 15, 55 + i * 30, 235),
+                       color=(0, 0, 0), fill=(0.9, 0.35, 0.2))
+        page.insert_text((32 + i * 30, 215 - i * 15), f"m{i}", fontsize=7)
+    png = page.get_pixmap(dpi=200).tobytes("png")
+    doc.close()
+    b64 = base64.b64encode(png).decode()
+
+    html = tmp_path / "saved.html"
+    html.write_text(
+        "<!doctype html><html><body>"
+        f'<figure><img src="data:image/png;base64,{b64}">'
+        "<figcaption>Figure 2: An inlined bitmap.</figcaption></figure>"
+        "<figure><table><tr><th>Model</th><th>WR</th></tr>"
+        "<tr><td>GPT-5.4</td><td>81%</td></tr></table>"
+        "<figcaption>Table 1: Win rates.</figcaption></figure>"
+        "</body></html>",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out"
+    r = _run(BLOCK_OPTIONAL_DEPS + f"""
+import sys, json
+sys.path.insert(0, {str(ROOT / 'src')!r})
+from pathlib import Path
+from figure_extractor.html_extractor import extract_html_figures
+m = extract_html_figures(Path({str(html)!r}), Path({str(out)!r}), base_url=None, make_sheet=False)
+assert 'bs4' not in sys.modules, 'the stdlib path must not import bs4'
+print(json.dumps(m['counts']))
+""")
+    assert r.returncode == 0, r.stderr
+    counts = json.loads(r.stdout.strip().splitlines()[-1])
+    # `ok` counts rendered bitmaps; a text table is reported under text_tables.
+    assert counts["ok"] >= 1 and counts["text_tables"] == 1, counts
+    assert (out / "fig2_html.png").stat().st_size > 0
+    assert (out / "tab1.md").read_text(encoding="utf-8").count("|") > 4
+
+
+def test_standalone_handles_html_too(tmp_path):
+    """The single file is the whole pipeline, not just the PDF half."""
+    html = tmp_path / "page.html"
+    html.write_text(
+        "<html><body><figure><table><tr><th>a</th><th>b</th></tr>"
+        "<tr><td>1</td><td>2</td></tr></table>"
+        "<figcaption>Table 1: A text table.</figcaption></figure></body></html>",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out"
+    r = _run(BLOCK_OPTIONAL_DEPS + f"""
+import runpy, sys
+sys.argv = ['fe', 'extract', {str(html)!r}, '--out', {str(out)!r}]
+runpy.run_path({str(STANDALONE)!r}, run_name='__main__')
+""")
+    assert r.returncode == 0, r.stderr
+    assert (out / "tab1.md").exists()

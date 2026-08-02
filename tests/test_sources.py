@@ -51,3 +51,41 @@ def test_unidentifiable_local_file_raises(tmp_path):
     junk.write_bytes(b"\x00\x01\x02not a document")
     with pytest.raises(SourceError, match="cannot tell"):
         ensure_local_source(str(junk), tmp_path / "work")
+
+
+# --------------------------------------------------------------------------
+# What people actually paste: a browser's PDF viewer, not a PDF
+# --------------------------------------------------------------------------
+
+def test_browser_pdf_viewer_urls_unwrap_to_the_file():
+    """A viewer's address bar carries the real document in a parameter."""
+    from figure_extractor.utils import normalize_source_url
+
+    cases = {
+        "chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html"
+        "?file=https%3A%2F%2Farxiv.org%2Fpdf%2F2607.28146v1":
+            "https://arxiv.org/pdf/2607.28146v1",
+        # Unwrapping composes with the landing-page rules: abs -> pdf.
+        "https://mozilla.github.io/pdf.js/web/viewer.html"
+        "?file=https%3A%2F%2Farxiv.org%2Fabs%2F1512.03385":
+            "https://arxiv.org/pdf/1512.03385",
+        "https://docs.google.com/viewer?url=https%3A%2F%2Fexample.org%2Fp.pdf&embedded=true":
+            "https://example.org/p.pdf",
+        "https://host.tld/web/viewer.html#file=/static/paper.pdf":
+            "https://host.tld/static/paper.pdf",
+    }
+    for given, want in cases.items():
+        got, note = normalize_source_url(given)
+        assert got == want, f"{given} -> {got}"
+        assert "viewer" in note
+
+
+def test_ordinary_urls_are_left_alone():
+    """A ?url= that is not a document must not hijack the source."""
+    from figure_extractor.utils import normalize_source_url
+
+    for url in ("https://example.com/blog/post",
+                "https://arxiv.org/pdf/2607.28146v1",
+                "https://example.com/search?url=cats"):
+        got, _ = normalize_source_url(url)
+        assert got == url, got

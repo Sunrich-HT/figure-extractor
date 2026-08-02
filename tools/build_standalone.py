@@ -29,8 +29,9 @@ BEGIN = ("<!-- BEGIN EMBEDDED EXTRACTOR: generated from "
 END = "<!-- END EMBEDDED EXTRACTOR -->"
 
 # Dependency order: later modules may use names defined by earlier ones.
-# html_extractor is deliberately absent — it needs beautifulsoup4.
-MODULES = ["utils", "captions", "layout", "quality", "contact_sheet", "pdf_cropper"]
+# html_extractor is included now that it parses with the standard library.
+MODULES = ["utils", "captions", "layout", "quality", "contact_sheet",
+           "pdf_cropper", "minisoup", "html_extractor"]
 
 HEADER = '''#!/usr/bin/env python3
 """figure-extractor, as one file — no install, no network, PyMuPDF only.
@@ -44,9 +45,10 @@ Use this when you cannot install anything: drop this file next to a PDF and run
     python figure_extractor_standalone.py crop paper.pdf --page 5 \\
         --bbox 295,245,556,475 --out fig04.png
 
-It carries the PDF path in full — caption detection, layout analysis, quality
-assessment, tiering, 300 dpi crops, manifest and contact sheet. HTML article
-sources need beautifulsoup4 and stay in the installable package.
+It carries the whole pipeline — caption detection, layout analysis, quality
+assessment, tiering, 300 dpi crops, manifest and contact sheet — and handles
+HTML sources too, including a saved page whose images are inline data: URIs.
+Give it a local .html file and it needs no network at all.
 """
 from __future__ import annotations
 '''
@@ -75,8 +77,8 @@ def main(argv=None):
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    ex = sub.add_parser("extract", help="Extract from a PDF file or URL")
-    ex.add_argument("source", help="Local PDF path, or a PDF/arXiv URL if this runtime has network")
+    ex = sub.add_parser("extract", help="Extract from a PDF or HTML file, or a URL")
+    ex.add_argument("source", help="Local PDF/HTML path, or a URL if this runtime has network")
     ex.add_argument("--out", default="figures")
     ex.add_argument("--dpi", type=int, default=300)
     ex.add_argument("--margin", type=float, default=8)
@@ -100,11 +102,18 @@ def main(argv=None):
         else:
             out = Path(args.out)
             src = ensure_local_source(args.source, out / ".work")
-            if src.kind != PDF:
-                raise SystemExit(
-                    f"{args.source!r} resolved to {src.kind!r}, not a PDF. This single-file "
-                    "build handles PDFs only; use the installable package for HTML sources."
+            if src.note:
+                print(f"note: {src.note}", file=sys.stderr)
+            if src.kind == HTML:
+                manifest = extract_html_figures(
+                    src.path, out,
+                    base_url=src.resolved_url if is_url(src.resolved_url) else None,
+                    make_sheet=not args.no_contact_sheet,
                 )
+                print(json.dumps(manifest, indent=2, ensure_ascii=False))
+                return 0
+            if src.kind != PDF:
+                raise SystemExit(f"{args.source!r} is neither a PDF nor an HTML document")
             manifest = extract_pdf_figures(
                 src.path, out, dpi=args.dpi, margin=args.margin,
                 make_sheet=not args.no_contact_sheet, make_zip=args.zip,
@@ -122,7 +131,7 @@ if __name__ == "__main__":
     sys.exit(main())
 '''
 
-RELATIVE_IMPORT = re.compile(r"^from \.\w* import ")
+RELATIVE_IMPORT = re.compile(r"^from \.(\w*) import (.+)$")
 TOP_LEVEL_IMPORT = re.compile(r"^(?:import |from [A-Za-z_])")
 
 
@@ -137,9 +146,16 @@ def build() -> str:
         for line in source.splitlines():
             if line.startswith("from __future__ import"):
                 continue
-            if RELATIVE_IMPORT.match(line):
-                # The module is inlined below instead; skip its continuation lines.
-                pending_relative = not line.rstrip().endswith(")") and line.rstrip().endswith("(")
+            rel = RELATIVE_IMPORT.match(line)
+            if rel:
+                # The module is inlined instead — but an alias would be lost with
+                # the import, so re-bind it: `from .m import A as B` -> `B = A`.
+                spec = rel.group(2).strip()
+                pending_relative = spec.endswith("(")
+                for part in spec.strip("()").split(","):
+                    bits = part.split("#")[0].split()
+                    if len(bits) == 3 and bits[1] == "as":
+                        chunk.append(f"{bits[2]} = {bits[0]}")
                 continue
             if pending_relative:
                 pending_relative = not line.strip().startswith(")")

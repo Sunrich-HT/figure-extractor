@@ -15,19 +15,8 @@ ALL_TIERS = ("A", "B", "C")
 
 
 def _load_html_extractor():
-    """Import the HTML path on demand.
-
-    Cropping a PDF needs only PyMuPDF; importing beautifulsoup4 up here would
-    make PDFs unextractable in runtimes that cannot install anything.
-    """
-    try:
-        from .html_extractor import extract_html_figures
-    except ImportError as exc:
-        raise SystemExit(
-            f"HTML sources need beautifulsoup4, which is not installed ({exc}).\n"
-            "Install it with `pip install 'figure-extractor[html]'`, or pass a PDF "
-            "instead — the PDF path needs only PyMuPDF."
-        ) from exc
+    """Import the HTML path on demand, so a PDF run never pays for it."""
+    from .html_extractor import extract_html_figures
     return extract_html_figures
 
 

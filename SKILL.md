@@ -23,11 +23,17 @@ Use this skill when the user needs complete figures or images extracted from PDF
 running it in a shell — e.g. `figure-extractor extract paper.pdf`. It is **not**
 an in-agent callable, a hosted service, or a "page" you activate.
 
-It does **not** require installation or network. Cropping a local PDF needs a
-Python interpreter with **PyMuPDF and nothing else** — no pip, no PyPI, no
-GitHub, no Pillow, no beautifulsoup4. If you cannot install packages, use the
-single-file build (Step 0 below). Only HTML article sources need
-`beautifulsoup4`, and only URL sources need network.
+It does **not** require installation or network. **PDF and HTML sources both**
+need a Python interpreter with **PyMuPDF and nothing else** — no pip, no PyPI,
+no GitHub, no Pillow, no beautifulsoup4. If you cannot install packages, use the
+single-file build, or the reduced extractor printed in this file (Step 0 below).
+Only URL sources need network.
+
+If the user gives you a **browser PDF-viewer URL** (`.../viewer.html?file=...`,
+Chrome's built-in viewer, Google Docs viewer), pass it in as-is: the real
+document is unwrapped from `?file=` / `#file=` / `?url=` before anything is
+fetched. If they give you a **saved HTML page**, pass the local file: images
+stored as inline `data:` URIs are decoded without touching the network.
 
 **Invocation contract**
 - **Mechanism:** a shell command — installed CLI, `python -m figure_extractor`, or the single file.

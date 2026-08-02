@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 import urllib.error
 import urllib.request
+from urllib.parse import parse_qs, unquote, urljoin, urlsplit
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -44,12 +45,35 @@ def is_url(source: str) -> bool:
     return source.startswith(("http://", "https://"))
 
 
+def _short(url: str, limit: int = 70) -> str:
+    return url if len(url) <= limit else url[:limit - 3] + "..."
+
+
 def normalize_source_url(url: str) -> tuple[str, str]:
     """Rewrite a landing-page URL to the artefact it stands for.
 
     Returns (url, note). Users paste the page they were reading, not the file
     they want; every entry here is a landing page whose PDF lives elsewhere.
     """
+    # A PDF *viewer* is not a document. People paste what their browser shows
+    # them, and a viewer's address bar carries the real file in a parameter:
+    # PDF.js and Chrome's built-in viewer use ?file= or #file=, document proxies
+    # use ?url=. Unwrap it, or the HTML of the viewer shell gets scraped instead.
+    parsed = urlsplit(url)
+    for source in (parsed.query, parsed.fragment):
+        if not source:
+            continue
+        for key, values in parse_qs(source, keep_blank_values=False).items():
+            if key.lower() not in {"file", "url", "src", "pdf", "docurl"}:
+                continue
+            for value in values:
+                inner = unquote(value)
+                if inner.startswith(("http://", "https://")):
+                    resolved, _ = normalize_source_url(inner)
+                    return resolved, f"pdf viewer ({key}=) -> {_short(resolved)}"
+                if inner.lower().split("?")[0].endswith(".pdf"):
+                    return urljoin(url, inner), f"pdf viewer ({key}=) -> embedded path"
+
     # arXiv abstract page -> PDF (version suffix preserved).
     m = re.match(r"https?://(?:www\.)?arxiv\.org/abs/([^?#]+)", url)
     if m:

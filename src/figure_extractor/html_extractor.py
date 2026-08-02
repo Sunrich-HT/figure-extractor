@@ -21,7 +21,7 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urljoin
 
-from bs4 import BeautifulSoup
+from .minisoup import BeautifulSoup as _MiniSoup
 
 from .captions import parse_label
 from .contact_sheet import make_contact_sheet
@@ -42,6 +42,20 @@ EXT_BY_TYPE = {
 
 # Decorative furniture that is never a paper figure.
 JUNK_URL_HINTS = ("pixel", "tracking", "beacon", "spacer", "1x1", "logo", "avatar", "icon", "badge", "sprite")
+
+
+def _soup(markup: str):
+    """Prefer beautifulsoup4 when it is installed; fall back to the stdlib.
+
+    bs4 handles broken markup better, but requiring it would put HTML sources
+    out of reach of a runtime that cannot install anything — which is precisely
+    where a saved page with inline images is the only source available.
+    """
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return _MiniSoup(markup)
+    return BeautifulSoup(markup, "html.parser")
 
 
 def _short_url(url: str, limit: int = 120) -> str:
@@ -126,7 +140,7 @@ def _table_to_markdown(table) -> str:
     return "\n".join(out)
 
 
-def _containers(soup: BeautifulSoup):
+def _containers(soup):
     """Figure containers, preferring semantic markup.
 
     The class-name fallback is deliberately kept out of the way: on content
@@ -152,7 +166,7 @@ def extract_html_figures(
     min_bytes: int = 3000,
 ) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
-    soup = BeautifulSoup(html_path.read_text(errors="ignore"), "html.parser")
+    soup = _soup(html_path.read_text(errors="ignore"))
     containers, strategy = _containers(soup)
 
     figures: list[dict] = []
