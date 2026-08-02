@@ -1,3 +1,6 @@
+# The PDF path — caption detection, layout, cropping, contact sheet — needs
+# only PyMuPDF.
 PyMuPDF>=1.24.0
-Pillow>=10.0.0
+
+# Only needed for HTML sources (`extract <html url>` / `--prefer html`).
 beautifulsoup4>=4.12.0

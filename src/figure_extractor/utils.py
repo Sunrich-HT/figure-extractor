@@ -117,7 +117,13 @@ def download_url(url: str, dest: Path, timeout: int = 90) -> tuple[bytes, str]:
             "manually and pass the local path instead."
         ) from exc
     except (urllib.error.URLError, OSError) as exc:
-        raise SourceError(f"could not fetch {url}: {exc}") from exc
+        raise SourceError(
+            f"could not fetch {url}: {exc}.\n"
+            "If this runtime has no outbound network, fetch the PDF on a machine "
+            "that does and re-run against the local file:\n"
+            "    figure-extractor extract ./paper.pdf --out ./figures\n"
+            "Cropping a local PDF needs no network and nothing beyond PyMuPDF."
+        ) from exc
     dest.write_bytes(data)
     return data, ctype
 

@@ -20,29 +20,44 @@ Use this skill when the user needs complete figures or images extracted from PDF
 ## What this skill actually is (read first)
 
 `figure-extractor` is a **command-line tool** (Python + PyMuPDF). "Using it" means
-running its CLI in a shell — e.g. `figure-extractor extract paper.pdf`. It is
-**not** an in-agent callable, a hosted service, or a "page" you activate, and it
-cannot run inside a runtime that has no shell or cannot install Python packages
-(e.g. Notion Agent, browser-only agents).
+running it in a shell — e.g. `figure-extractor extract paper.pdf`. It is **not**
+an in-agent callable, a hosted service, or a "page" you activate.
+
+It does **not** require installation or network. Cropping a local PDF needs a
+Python interpreter with **PyMuPDF and nothing else** — no pip, no PyPI, no
+GitHub, no Pillow, no beautifulsoup4. If you cannot install packages, use the
+single-file build (Step 0 below). Only HTML article sources need
+`beautifulsoup4`, and only URL sources need network.
 
 **Invocation contract**
-- **Mechanism:** shell command `figure-extractor <subcommand> ...` (installed via `pip install -e .`).
+- **Mechanism:** a shell command — installed CLI, `python -m figure_extractor`, or the single file.
 - **Input:** a local PDF/HTML path or a PDF/arXiv/HTML URL.
 - **Output:** PNG files + `manifest.json` + `contact_sheet.jpg` (+ optional `figures.zip`) written to `--out`.
 
 ## Step 0 — precondition check (always do this first)
 
-Before you promise figure extraction, verify the tool is actually runnable in
-this environment:
+Work down this ladder and stop at the first rung that runs. Do **not** conclude
+the tool is unavailable until you have tried rung 3.
 
 ```bash
-figure-extractor --help     # if this errors, or there is no shell, the tool is UNAVAILABLE
+# 1. Installed CLI
+figure-extractor --help
+
+# 2. Repo present but not installed — no pip needed
+PYTHONPATH=src python -m figure_extractor --help
+
+# 3. Nothing installable: one file, PyMuPDF only, no network
+python standalone/figure_extractor_standalone.py --help
+python -c "import fitz; print(fitz.__doc__)"   # the only real requirement
 ```
 
-- **Available** (command runs) → follow *Preferred algorithm*.
-- **Unavailable** (no shell / not installed / sandboxed) → go to *Degraded mode*.
-  Not having the tool is **not** a failure and **not** a rule violation — degrade
-  gracefully and tell the user what you did.
+- **Any rung runs** → follow *Preferred algorithm*.
+- **No shell at all, or no Python with PyMuPDF** → go to *Degraded mode*.
+
+**Do not confuse "no network" with "cannot extract".** A runtime with no DNS can
+still crop a PDF it already has on disk — including one the user just uploaded
+into the conversation. Network is needed only to *fetch* a URL. If the fetch
+fails, ask the user for the file rather than degrading to prose.
 
 ## Core rule (when the extractor is available)
 
@@ -71,13 +86,14 @@ Do **not** rely on embedded PDF image extraction alone. Many figures are compose
 6. If a crop is wrong, correct it with `crop --bbox`, starting from the bbox the
    manifest already recorded.
 
-## Degraded mode (no shell / CLI unavailable / bitmaps unreachable)
+## Degraded mode (last resort — check Step 0 rung 3 first)
 
-Use this when you **cannot** run `figure-extractor` (no shell, no Python/pip,
-sandboxed runtime), **or** when you can run nothing that retrieves the actual
-bitmap (e.g. the HTML strips `<img>` `src`, arXiv image URLs 404, page behind
-auth). This path is **explicitly allowed** and does not count as failing the
-"core rule":
+Use this **only** when every rung of Step 0 failed: no shell at all, or no Python
+with PyMuPDF, **or** the PDF bytes are genuinely unobtainable (no network *and*
+the user has no file to give you; HTML strips `<img>` `src`; images 404; page
+behind auth). A missing network alone does **not** qualify — ask for the file.
+
+This path is **explicitly allowed** and does not count as failing the "core rule":
 
 1. **Link the original.** Provide the direct figure URL, the source page, or the
    arXiv PDF page number + figure number so the user can open the real image.
@@ -93,14 +109,28 @@ Degraded output = original link + faithful structured description + an explicit
 
 ## Setup
 
-**A missing package is not a reason to degrade — install it.** The dependency
-set is small (PyMuPDF, Pillow, beautifulsoup4); no GPU, no model, no service.
+**A missing package is not a reason to degrade.** The PDF path needs only
+PyMuPDF; no GPU, no model, no service.
 
 ```bash
 pip install git+https://github.com/Sunrich-HT/figure-extractor
+pip install "figure-extractor[html] @ git+https://github.com/Sunrich-HT/figure-extractor"
 ```
 
-From a checkout: `pip install -e .`
+From a checkout: `pip install -e .` (add `".[html]"` for HTML sources).
+
+**Cannot install at all?** Nothing needs installing as long as `import fitz`
+works:
+
+```bash
+PYTHONPATH=src python -m figure_extractor extract paper.pdf --out ./figures
+python standalone/figure_extractor_standalone.py extract paper.pdf --out ./figures
+```
+
+`standalone/figure_extractor_standalone.py` is a single generated file carrying
+the whole PDF path. Copy it anywhere — it imports only PyMuPDF and the standard
+library. Regenerate it after changing `src/` with
+`python tools/build_standalone.py`.
 
 ## Have a PDF? Run it on the PDF.
 

@@ -15,6 +15,28 @@ pip install -e .
 figure-extractor extract https://arxiv.org/abs/1512.03385 --out ./figures --zip
 ```
 
+## Runs without pip, network, or anything but PyMuPDF
+
+**Cropping a PDF requires PyMuPDF and nothing else** — no Pillow, no
+beautifulsoup4, and no package install. That matters in sandboxes, which
+routinely ship PyMuPDF but cannot reach PyPI or GitHub. Three ways to run, in
+order of preference:
+
+```bash
+figure-extractor extract paper.pdf                                   # installed CLI
+PYTHONPATH=src python -m figure_extractor extract paper.pdf          # repo, not installed
+python standalone/figure_extractor_standalone.py extract paper.pdf   # one file, no repo
+```
+
+[`standalone/figure_extractor_standalone.py`](standalone/figure_extractor_standalone.py)
+is a single generated file carrying the entire PDF path. Copy it next to a PDF
+and run it. It is built from `src/` by `python tools/build_standalone.py`, and a
+test asserts the two never drift apart.
+
+Network is needed only to *fetch* a URL; a runtime with no DNS can still crop a
+PDF already on disk, including one a user just uploaded. `beautifulsoup4` is
+needed only for HTML article sources — install it with `pip install -e ".[html]"`.
+
 ## Sources
 
 | Source | Handling |

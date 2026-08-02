@@ -7,12 +7,28 @@ import sys
 from pathlib import Path
 from urllib.parse import urljoin
 
-from .html_extractor import extract_html_figures
 from .pdf_cropper import crop_manual, extract_pdf_figures
 from .captions import ALL_KINDS
 from .utils import HTML, PDF, SourceError, ensure_local_source, is_url
 
 ALL_TIERS = ("A", "B", "C")
+
+
+def _load_html_extractor():
+    """Import the HTML path on demand.
+
+    Cropping a PDF needs only PyMuPDF; importing beautifulsoup4 up here would
+    make PDFs unextractable in runtimes that cannot install anything.
+    """
+    try:
+        from .html_extractor import extract_html_figures
+    except ImportError as exc:
+        raise SystemExit(
+            f"HTML sources need beautifulsoup4, which is not installed ({exc}).\n"
+            "Install it with `pip install 'figure-extractor[html]'`, or pass a PDF "
+            "instead — the PDF path needs only PyMuPDF."
+        ) from exc
+    return extract_html_figures
 
 
 def _discover_pdf_link(html_path: Path, base_url: str | None) -> str | None:
@@ -67,6 +83,7 @@ def cmd_extract(args) -> int:
         print(f"note: {src.note}", file=sys.stderr)
 
     if src.kind == HTML and args.prefer in {"auto", "html"}:
+        extract_html_figures = _load_html_extractor()
         base = src.resolved_url if is_url(src.resolved_url) else None
         manifest = extract_html_figures(src.path, out, base_url=base, make_sheet=True)
         got = manifest["counts"]["rendered"]
