@@ -20,6 +20,14 @@ ROOT = Path(__file__).resolve().parent.parent
 PKG = ROOT / "src" / "figure_extractor"
 DEST = ROOT / "standalone" / "figure_extractor_standalone.py"
 
+# The reduced extractor is embedded in SKILL.md itself, because a runtime with
+# no network cannot fetch any file from this repo — including the standalone.
+BOOTSTRAP = ROOT / "bootstrap" / "minimal_extractor.py"
+SKILL = ROOT / "SKILL.md"
+BEGIN = ("<!-- BEGIN EMBEDDED EXTRACTOR: generated from "
+         "bootstrap/minimal_extractor.py by tools/build_standalone.py -->")
+END = "<!-- END EMBEDDED EXTRACTOR -->"
+
 # Dependency order: later modules may use names defined by earlier ones.
 # html_extractor is deliberately absent — it needs beautifulsoup4.
 MODULES = ["utils", "captions", "layout", "quality", "contact_sheet", "pdf_cropper"]
@@ -148,25 +156,36 @@ def build() -> str:
     return "\n".join(parts).rstrip("\n") + "\n"
 
 
+def build_skill() -> str:
+    """SKILL.md with the embedded extractor refreshed from bootstrap/."""
+    text = SKILL.read_text(encoding="utf-8")
+    start, end = text.index(BEGIN), text.index(END)
+    code = BOOTSTRAP.read_text(encoding="utf-8").rstrip("\n")
+    block = f"{BEGIN}\n\n```python\n{code}\n```\n\n"
+    return text[:start] + block + text[end:]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true",
                     help="Exit non-zero if the committed file is out of date")
     args = ap.parse_args()
 
-    generated = build()
+    artifacts = [(DEST, build()), (SKILL, build_skill())]
     if args.check:
-        current = DEST.read_text(encoding="utf-8") if DEST.exists() else ""
-        if current != generated:
-            print(f"{DEST.relative_to(ROOT)} is stale — run: python tools/build_standalone.py",
-                  file=sys.stderr)
+        stale = [dest for dest, want in artifacts
+                 if (dest.read_text(encoding="utf-8") if dest.exists() else "") != want]
+        if stale:
+            names = ", ".join(str(d.relative_to(ROOT)) for d in stale)
+            print(f"{names} stale — run: python tools/build_standalone.py", file=sys.stderr)
             return 1
-        print(f"{DEST.relative_to(ROOT)} is up to date")
+        print("generated artifacts are up to date")
         return 0
 
-    DEST.parent.mkdir(parents=True, exist_ok=True)
-    DEST.write_text(generated, encoding="utf-8")
-    print(f"wrote {DEST.relative_to(ROOT)} ({len(generated.splitlines())} lines)")
+    for dest, want in artifacts:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(want, encoding="utf-8")
+        print(f"wrote {dest.relative_to(ROOT)} ({len(want.splitlines())} lines)")
     return 0
 
 

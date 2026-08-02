@@ -994,6 +994,10 @@ TEXT_BODIED_KINDS = frozenset({"table", "algorithm", "listing", "box"})
 MAX_INTERNAL_GAP = 42.0
 # How many column segments back a page-broken exhibit may be followed.
 MAX_CONTINUATION_SEGMENTS = 4
+# How much closer the opposite side's rules must be before they are allowed to
+# overrule the table detector. Two tables can hug one caption from either side,
+# a point or two apart; only a decisive margin means anything.
+DECISIVE_RULE_MARGIN = 20.0
 # How far from the caption the figure body may start. Generous on purpose: the
 # real guard against over-reaching is the barrier check, not this number.
 MAX_CAPTION_GAP = 120.0
@@ -1132,25 +1136,21 @@ def _match_table(
     return None if best is None else fitz.Rect(best[1])
 
 
-def _rule_side(
+def _rule_runs(
     primitives: list[fitz.Rect],
     cap_rect: fitz.Rect,
     band: Column,
     window: tuple[float, float],
-) -> str | None:
-    """Which side of the caption the table's own rules sit on, if it has any.
+) -> dict[str, float]:
+    """Distance from the caption to the nearest run of rules on each side.
 
-    LaTeX puts ``\\caption`` wherever the author wrote it, so a table caption may
-    sit above or below its rules. Deciding by the gap to the nearest content
-    alone is fragile: a two-column page whose grid was read as one wide column
-    makes the paragraphs underneath look like short labels rather than prose, so
-    they become candidate table content a point or two nearer than the real
-    table. Booktabs rules are unambiguous, so use them when they exist and let
-    the gap decide only when they do not.
+    Only a run of two or more counts: a tabular needs a top and a bottom rule,
+    while one stray hairline is more likely a figure's axis.
     """
     y_lo, y_hi = window
     min_width = max(40.0, band.width * 0.35)
-    above, below = [], []
+    above: list[float] = []
+    below: list[float] = []
     for r in primitives:
         if r.height > 3.0 or r.width < min_width:
             continue
@@ -1160,17 +1160,31 @@ def _rule_side(
             above.append(cap_rect.y0 - r.y1)
         elif r.y0 >= cap_rect.y1 - 2:
             below.append(r.y0 - cap_rect.y1)
+    runs: dict[str, float] = {}
+    if len(above) >= 2:
+        runs["up"] = min(above)
+    if len(below) >= 2:
+        runs["down"] = min(below)
+    return runs
 
-    # A table is bounded by at least a top and a bottom rule; one stray hairline
-    # is more likely a figure's axis than a tabular.
-    up_ok, down_ok = len(above) >= 2, len(below) >= 2
-    if up_ok and not down_ok:
-        return "up"
-    if down_ok and not up_ok:
-        return "down"
-    if up_ok and down_ok:
-        return "up" if min(above) < min(below) else "down"
-    return None
+
+def _rule_side(
+    primitives: list[fitz.Rect],
+    cap_rect: fitz.Rect,
+    band: Column,
+    window: tuple[float, float],
+) -> str | None:
+    """Which side of the caption the exhibit's own rules sit on, if it has any.
+
+    LaTeX puts ``\\caption`` wherever the author wrote it, so a table caption may
+    sit above or below its rules. Deciding by the gap to the nearest content
+    alone is fragile: a two-column page whose grid was read as one wide column
+    makes the paragraphs underneath look like short labels rather than prose, so
+    they become candidate table content a point or two nearer than the real
+    table. Rules are better evidence, so consult them first.
+    """
+    runs = _rule_runs(primitives, cap_rect, band, window)
+    return min(runs, key=runs.get) if runs else None
 
 
 def _caption_window(
@@ -1375,9 +1389,30 @@ def _infer_bbox(
     prose = [b.rect for b in blocks if _in_band(b.rect, band) and is_body_text(b, band.width)]
     barriers = [r for r in other_captions if _overlaps_band(r, band)] + prose
 
-    # Structural detection wins outright when it fires.
+    # The exhibit's own rules are the strongest evidence about which side its
+    # body is on, so settle that before anything else gets to claim a region.
+    runs = (
+        _rule_runs(primitives, cap_rect, band, window)
+        if label.kind in TEXT_BODIED_KINDS else {}
+    )
+    rule_side = min(runs, key=runs.get) if runs else None
+
+    # Structural detection wins when it fires — but not against those rules. A
+    # table finder reads a grouped bar chart as a table, and on a page holding
+    # both, the chart below can be nearer to the caption than the tabular above.
     if label.kind == "table":
         matched = _match_table(cap_rect, band, tables, window)
+        if matched is not None and runs:
+            up = matched.y1 <= cap_rect.y0 + 2
+            matched_side = "up" if up else "down"
+            matched_gap = (cap_rect.y0 - matched.y1) if up else (matched.y0 - cap_rect.y1)
+            other = "down" if up else "up"
+            # Rules hugging the caption on the *other* side outrank a detector
+            # hit that is decisively further away: that region belongs to some
+            # other exhibit. A near-tie proves nothing — two tables routinely
+            # sandwich one caption — so the detector keeps its answer.
+            if runs.get(other, float("inf")) < matched_gap - DECISIVE_RULE_MARGIN:
+                matched = None
         if matched is not None:
             crop = fitz.Rect(matched)
             crop.x0 = max(band.x0 - 2, crop.x0 - margin)
@@ -1409,9 +1444,7 @@ def _infer_bbox(
     # but fall back to the other side rather than guessing blindly. Where the
     # exhibit has rules of its own, they outrank the convention: plenty of papers
     # caption a table underneath it.
-    primary = "down" if label.kind in TEXT_BODIED_KINDS else "up"
-    if label.kind in TEXT_BODIED_KINDS:
-        primary = _rule_side(primitives, cap_rect, band, window) or primary
+    primary = rule_side or ("down" if label.kind in TEXT_BODIED_KINDS else "up")
     secondary = "up" if primary == "down" else "down"
 
     # Evaluate both sides and let the evidence decide. Committing to the

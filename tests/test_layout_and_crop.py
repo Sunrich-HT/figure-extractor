@@ -250,3 +250,43 @@ def test_a_self_contained_exhibit_is_not_stitched(tmp_path):
     manifest = extract_pdf_figures(pdf, tmp_path / "out2", dpi=72,
                                    make_sheet=False, make_zip=False)
     assert all("parts" not in f for f in manifest["figures"]), manifest["figures"]
+
+
+def test_a_chart_read_as_a_table_does_not_steal_the_caption(tmp_path):
+    """Table finders read a gridded bar chart as a table.
+
+    On a page holding a real tabular above its caption and a chart below, the
+    chart can be the nearer "detected table" — and it used to win outright,
+    handing Table 6 of arXiv 2607.28146 a picture of Figure 3.
+    """
+    pdf = tmp_path / "chart_and_table.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_text((60, 80), "4  Results", fontsize=11)
+    # The real tabular, captioned underneath it.
+    page.draw_line(fitz.Point(60, 120), fitz.Point(552, 120))
+    page.insert_text((70, 142), "Model      Overall   Liberal   Fascist", fontsize=9)
+    page.draw_line(fitz.Point(60, 152), fitz.Point(552, 152))
+    page.insert_text((70, 172), "GPT-5.4      83%       82%       79%", fontsize=9)
+    page.insert_text((70, 188), "Kimi K2.5    78%       78%       85%", fontsize=9)
+    page.draw_line(fitz.Point(60, 202), fitz.Point(552, 202))
+    page.insert_text((60, 230), "Table 1: Endorsement rate, captioned below the tabular.",
+                     fontsize=9)
+    # A gridded chart further down, which a table finder happily calls a table.
+    for i in range(6):
+        x = 120 + i * 70
+        page.draw_line(fitz.Point(x, 320), fitz.Point(x, 560))
+    for i in range(8):
+        y = 330 + i * 28
+        page.draw_rect(fitz.Rect(120, y, 120 + 40 * (i % 5 + 3), y + 18),
+                       color=(0, 0, 0), fill=(0.4, 0.5, 0.7))
+    page.insert_text((60, 600), "Figure 1: Distribution of game outcomes.", fontsize=9)
+    doc.save(pdf)
+    doc.close()
+
+    manifest = extract_pdf_figures(pdf, tmp_path / "out", dpi=72,
+                                   make_sheet=False, make_zip=False)
+    table = next(f for f in manifest["figures"] if f["kind"] == "table")
+    assert table["bbox"][3] <= 232, (
+        f"the table's crop reached past its caption into the chart: {table['bbox']}")
+    assert table["bbox"][1] <= 125, f"crop missed the tabular's top rule: {table['bbox']}"

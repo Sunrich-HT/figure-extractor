@@ -120,3 +120,79 @@ def test_download_failure_explains_the_remedy(tmp_path, monkeypatch):
         download_url("https://arxiv.org/pdf/2607.28146v1", tmp_path / "x.pdf")
     message = str(excinfo.value)
     assert "local file" in message and "PyMuPDF" in message
+
+
+# --------------------------------------------------------------------------
+# The rung that has to work when the repo itself is unreachable
+# --------------------------------------------------------------------------
+
+SKILL = ROOT / "SKILL.md"
+BOOTSTRAP = ROOT / "bootstrap" / "minimal_extractor.py"
+
+
+def _embedded_extractor() -> str:
+    """The Python block SKILL.md tells an agent to write out and run."""
+    text = SKILL.read_text(encoding="utf-8")
+    start = text.index("<!-- BEGIN EMBEDDED EXTRACTOR")
+    end = text.index("<!-- END EMBEDDED EXTRACTOR -->")
+    block = text[start:end]
+    body = block.split("```python", 1)[1]
+    return body.rsplit("```", 1)[0].strip("\n")
+
+
+def test_skill_carries_the_extractor_verbatim():
+    """A no-network runtime only ever sees SKILL.md, so the code must be in it."""
+    assert _embedded_extractor() == BOOTSTRAP.read_text(encoding="utf-8").rstrip("\n")
+
+
+def test_extractor_taken_from_skill_md_actually_crops(tmp_path):
+    """Write out what SKILL.md prints, deny every optional dep, and run it.
+
+    This is the whole point of embedding it: an agent that can read the skill
+    can extract figures without fetching anything.
+    """
+    pdf = tmp_path / "paper.pdf"
+    _make_pdf(pdf)
+    script = tmp_path / "fe_min.py"
+    script.write_text(_embedded_extractor(), encoding="utf-8")
+    out = tmp_path / "out"
+
+    r = _run(BLOCK_OPTIONAL_DEPS + f"""
+import runpy, sys
+sys.argv = ['fe_min', {str(pdf)!r}, {str(out)!r}, '72']
+runpy.run_path({str(script)!r}, run_name='__main__')
+""")
+    assert r.returncode == 0, r.stderr
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["extractor"] == "skill-embedded-reduced"
+    assert manifest["counts"]["ok"] >= 1, manifest
+    crop = out / "fig1_p01.png"
+    assert crop.exists() and crop.stat().st_size > 0
+
+
+def test_embedded_extractor_flags_what_it_cannot_judge(tmp_path):
+    """Reduced fidelity is fine; a confidently wrong crop is not.
+
+    A caption with nothing beside it must come back failed, never as a figure.
+    """
+    pdf = tmp_path / "bare.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_text((70, 400), "Figure 1: A caption with no artwork anywhere near it.",
+                     fontsize=9)
+    doc.save(pdf)
+    doc.close()
+
+    script = tmp_path / "fe_min.py"
+    script.write_text(_embedded_extractor(), encoding="utf-8")
+    out = tmp_path / "out"
+    r = _run(f"""
+import runpy, sys
+sys.argv = ['fe_min', {str(pdf)!r}, {str(out)!r}, '72']
+runpy.run_path({str(script)!r}, run_name='__main__')
+""")
+    assert r.returncode == 0, r.stderr
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    item = manifest["figures"][0]
+    assert item["status"] != "ok", item
+    assert item.get("quality_reasons"), item
