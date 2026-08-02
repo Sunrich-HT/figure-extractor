@@ -992,6 +992,8 @@ TEXT_BODIED_KINDS = frozenset({"table", "algorithm", "listing", "box"})
 
 # Vertical distance (pt) allowed between two pieces of the same figure.
 MAX_INTERNAL_GAP = 42.0
+# How many column segments back a page-broken exhibit may be followed.
+MAX_CONTINUATION_SEGMENTS = 4
 # How far from the caption the figure body may start. Generous on purpose: the
 # real guard against over-reaching is the barrier check, not this number.
 MAX_CAPTION_GAP = 120.0
@@ -1472,6 +1474,105 @@ def _infer_bbox(
     return crop, had_graphics, band, prose
 
 
+def _reading_segments(pinfo) -> list[Column]:
+    """One page's column bands in reading order."""
+    layout = pinfo["layout"]
+    if layout.is_multi_column and layout.columns:
+        return sorted(layout.columns, key=lambda c: c.x0)
+    return [Column(layout.content_x0, layout.content_x1)]
+
+
+def _segment_tail(pinfo, band: Column) -> tuple[fitz.Rect, bool] | None:
+    """The trailing run of exhibit content in one column, read bottom-up.
+
+    Returns ``(rect, starts_here)``, where ``starts_here`` means a paragraph or
+    another caption ended the run — the exhibit begins in this segment and the
+    walk backwards can stop. Running out of blocks instead means the segment was
+    filled top to bottom, so the exhibit continues even further back.
+
+    ``None`` when this segment cannot be a continuation: a broken exhibit always
+    resumes at the foot of the preceding column, so content that stops well
+    short of it belongs to something else.
+    """
+    layout = pinfo["layout"]
+    caps = [c["rect"] for c in pinfo["captions"] if _overlaps_band(c["rect"], band)]
+    candidates = sorted(
+        (b for b in pinfo["blocks"] if _in_band(b.rect, band) and b.rect.y1 <= layout.content_y1 + 2),
+        key=lambda b: -b.rect.y0,
+    )
+
+    kept: list[fitz.Rect] = []
+    starts_here = False
+    frontier: float | None = None
+    for b in candidates:
+        if text_role(b, band.width) == PROSE or any(b.rect.intersects(c) for c in caps):
+            starts_here = True
+            break
+        if frontier is not None and frontier - b.rect.y1 > MAX_INTERNAL_GAP:
+            starts_here = True
+            break
+        kept.append(b.rect)
+        frontier = b.rect.y0
+
+    if not kept:
+        return None
+    rect = fitz.Rect(kept[0])
+    for r in kept[1:]:
+        rect |= r
+    if layout.content_y1 - rect.y1 > MAX_INTERNAL_GAP:
+        return None  # a gap at the foot of the column: not a continuation
+    return rect, starts_here
+
+
+def _continuation_parts(pages, stream, seg_index: int) -> list[tuple[int, fitz.Rect]]:
+    """Earlier pieces of an exhibit broken across columns or pages.
+
+    Walks backwards through the document's reading order, so a listing that ran
+    down the left column, over into the right, and onto the next page is
+    recovered in the order a reader meets it.
+    """
+    parts: list[tuple[int, fitz.Rect]] = []
+    for k in range(seg_index - 1, max(-1, seg_index - 1 - MAX_CONTINUATION_SEGMENTS), -1):
+        page_i, band = stream[k]
+        found = _segment_tail(pages[page_i], band)
+        if found is None:
+            break
+        rect, starts_here = found
+        parts.append((page_i, rect))
+        if starts_here:
+            break
+    parts.reverse()
+    return parts
+
+
+def _looks_truncated(crop: fitz.Rect, cap_rect: fitz.Rect, layout: PageLayout) -> bool:
+    """A crop too small to be the exhibit, with its caption at the top of the column.
+
+    That pairing is the signature of a page break: the body ran out above, and
+    all that is left on this page is the last line or two before the caption.
+    """
+    return crop.height < 40 and (cap_rect.y0 - layout.content_y0) < 60
+
+
+def _render_parts(parts: list[tuple[fitz.Page, fitz.Rect]], dpi: int, dest: Path, gap: int = 14):
+    """Stitch the pieces of a broken exhibit into one image, in reading order."""
+    pixes = [page.get_pixmap(dpi=dpi, clip=rect, alpha=False) for page, rect in parts]
+    width = max(p.width for p in pixes)
+    height = sum(p.height for p in pixes) + gap * (len(pixes) - 1)
+    doc = fitz.open()
+    try:
+        sheet = doc.new_page(width=width, height=height)
+        sheet.draw_rect(sheet.rect, color=None, fill=(1, 1, 1))
+        y = 0
+        for p in pixes:
+            sheet.insert_image(fitz.Rect(0, y, p.width, y + p.height), pixmap=p)
+            y += p.height + gap
+        # 72 dpi renders one pixel per point, preserving the parts' own scale.
+        sheet.get_pixmap(dpi=72).save(dest)
+    finally:
+        doc.close()
+
+
 def _find_captions(doc: fitz.Document):
     """All caption blocks in reading order, keyed by (kind, number).
 
@@ -1516,6 +1617,10 @@ def extract_pdf_figures(
     seen_slugs: dict[str, int] = {}
     first_of_kind: set[str] = set()
 
+    # Reading order across the whole document, so an exhibit broken by a column
+    # or page break can be followed back to where it started.
+    stream = [(i, col) for i, p in enumerate(pages) for col in _reading_segments(p)]
+
     for pinfo in pages:
         page = pinfo["page"]
         layout = pinfo["layout"]
@@ -1536,7 +1641,23 @@ def extract_pdf_figures(
             crop, had_graphics, band, prose = _infer_bbox(
                 page, layout, blocks, primitives, cap["rect"], label, others, margin, tables
             )
-            verdict = assess(crop, page.rect, prose, had_graphics, band.width)
+            parts: list[tuple[int, fitz.Rect]] = []
+            if label.kind in TEXT_BODIED_KINDS and _looks_truncated(crop, cap["rect"], layout):
+                seg = next(
+                    (k for k, (pi, col) in enumerate(stream)
+                     if pi == pinfo["page_index"] and _overlaps_band(cap["rect"], col)),
+                    None,
+                )
+                if seg is not None:
+                    parts = _continuation_parts(pages, stream, seg)
+
+            if parts:
+                # The exhibit is real, just split; judge it on its largest piece.
+                parts = parts + [(pinfo["page_index"], crop)]
+                biggest_i, biggest = max(parts, key=lambda pr: pr[1].get_area())
+                verdict = assess(biggest, pages[biggest_i]["page"].rect, [], True, band.width)
+            else:
+                verdict = assess(crop, page.rect, prose, had_graphics, band.width)
             refs = count_references(body_text, label)
             is_first = label.kind not in first_of_kind
             first_of_kind.add(label.kind)
@@ -1564,7 +1685,14 @@ def extract_pdf_figures(
                 "_slug": slug,
                 "_crop": crop,
                 "_page": page,
+                "_parts": [(pages[i]["page"], r) for i, r in parts],
             }
+            if parts:
+                entry["parts"] = [
+                    {"page": i + 1, "bbox": [round(v, 2) for v in (r.x0, r.y0, r.x1, r.y1)]}
+                    for i, r in parts
+                ]
+                entry["method"] = "caption-anchored-crop-stitched-across-breaks"
             entry.update(verdict.as_dict())
             items.append(entry)
 
@@ -1576,7 +1704,7 @@ def extract_pdf_figures(
     for e in items:
         if e["suggested_tier"] not in tiers:
             skipped += 1
-            e.pop("_crop"), e.pop("_page"), e.pop("_sort"), e.pop("_slug")
+            e.pop("_crop"), e.pop("_page"), e.pop("_sort"), e.pop("_slug"), e.pop("_parts")
             e["output"] = None
             e["skipped_reason"] = f"tier {e['suggested_tier']} not in requested tiers {list(tiers)}"
             figures.append(e)
@@ -1585,12 +1713,16 @@ def extract_pdf_figures(
         page = e.pop("_page")
         e.pop("_sort")
         slug = e.pop("_slug")
+        part_rects = e.pop("_parts")
         out_path = out_dir / f"{slug}_p{e['page']:02d}.png"
         try:
-            if crop.is_empty or crop.width < 4 or crop.height < 4:
+            if part_rects:
+                _render_parts(part_rects, dpi, out_path)
+            elif crop.is_empty or crop.width < 4 or crop.height < 4:
                 raise ValueError(f"degenerate crop {crop.width:.1f}x{crop.height:.1f}pt")
-            pix = page.get_pixmap(dpi=dpi, clip=crop, alpha=False)
-            pix.save(out_path)
+            else:
+                pix = page.get_pixmap(dpi=dpi, clip=crop, alpha=False)
+                pix.save(out_path)
         except Exception as exc:
             e["output"] = None
             e["status"] = "failed"

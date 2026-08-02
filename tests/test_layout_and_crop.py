@@ -5,6 +5,8 @@ These exist because the original test suite asserted only that a regex matched
 the page. Every test here fails on the pre-rewrite behaviour.
 """
 
+from pathlib import Path
+
 import fitz
 import pytest
 
@@ -197,3 +199,54 @@ def test_table_captioned_below_crops_upward(tmp_path):
     assert y1 <= 240, f"crop must stay above the caption, got {table['bbox']}"
     assert y0 <= 135, f"crop must reach the top rule, got {table['bbox']}"
     assert table["status"] != FAILED, table.get("quality_reasons")
+
+
+def _page_broken_listing(tmp_path):
+    """A transcript that fills page 1 and spills two lines onto page 2.
+
+    The caption follows the spill, so page 2 on its own holds nothing but a
+    fragment — the shape of Listing 2 in arXiv 2607.28146.
+    """
+    pdf = tmp_path / "broken_listing.pdf"
+    doc = fitz.open()
+    first = doc.new_page(width=612, height=792)
+    first.insert_textbox(fitz.Rect(70, 70, 540, 190), LOREM * 2, fontsize=9)
+    for i, y in enumerate(range(230, 762, 12)):
+        first.insert_text((70, y), f"Alice: turn {i:02d} — I vote JA and keep my word.",
+                          fontsize=8, fontname="cour")
+
+    second = doc.new_page(width=612, height=792)
+    second.insert_text((70, 80), "Bob: fine, the game ends here.", fontsize=8, fontname="cour")
+    second.insert_textbox(fitz.Rect(70, 95, 540, 130),
+                          "Listing 1: A transcript broken across the page boundary.",
+                          fontsize=9)
+    second.insert_textbox(fitz.Rect(70, 150, 540, 300), LOREM * 2, fontsize=9)
+    doc.save(pdf)
+    doc.close()
+    return pdf
+
+
+def test_exhibit_broken_across_pages_is_stitched(tmp_path):
+    """The fragment sharing the caption's page is not the exhibit."""
+    pdf = _page_broken_listing(tmp_path)
+    manifest = extract_pdf_figures(pdf, tmp_path / "out", dpi=72,
+                                   make_sheet=False, make_zip=False)
+    item = next(f for f in manifest["figures"] if f["kind"] == "listing")
+    assert item["status"] != FAILED, item.get("quality_reasons")
+
+    parts = item.get("parts")
+    assert parts, "a page-broken exhibit must record every part it was built from"
+    assert [p["page"] for p in parts] == [1, 2], parts
+    # The part on page 1 is the body, and it must run to the foot of the column.
+    body = parts[0]["bbox"]
+    assert body[3] > 700, f"page-1 part stops short of the column foot: {body}"
+    assert body[1] > 190, f"page-1 part swallowed the paragraph above it: {body}"
+    assert Path(item["output"]).exists()
+
+
+def test_a_self_contained_exhibit_is_not_stitched(tmp_path):
+    """The walk back must not fire for exhibits that are whole on their own page."""
+    pdf = _two_column_page(tmp_path)
+    manifest = extract_pdf_figures(pdf, tmp_path / "out2", dpi=72,
+                                   make_sheet=False, make_zip=False)
+    assert all("parts" not in f for f in manifest["figures"]), manifest["figures"]

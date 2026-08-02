@@ -78,9 +78,13 @@ fragments; embedded-image extraction returns pieces. Instead:
    caption-above convention, because many papers caption a table underneath it.
    Text set in a fixed-width face is a listing's body, not the paper's prose, so
    it does not act as a barrier.
-4. **High-DPI render and crop** with PyMuPDF (300 dpi default).
-5. **Quality scoring** — every crop is `ok` / `suspect` / `failed` with reasons.
-6. **Contact sheet, manifest, ZIP.**
+4. **Continuation across breaks** — an exhibit whose caption is left with only a
+   fragment is followed backwards through the document's reading order, column
+   by column and page by page, until a paragraph or another caption marks where
+   it began. The pieces are stitched into one image in reading order.
+5. **High-DPI render and crop** with PyMuPDF (300 dpi default).
+6. **Quality scoring** — every crop is `ok` / `suspect` / `failed` with reasons.
+7. **Contact sheet, manifest, ZIP.**
 
 Tables are first-class: detected structurally, including tables that are pure
 text with rules. On the HTML side every container form is handled — `<img>`,
@@ -94,19 +98,19 @@ it filters nothing unless you ask it to.
 
 ## Measured behaviour
 
-Recall and crop quality on two papers with opposite layouts, checked by eye
-against the rendered contact sheets:
+Recall and crop quality on papers with deliberately different layouts, checked
+by eye against the rendered contact sheets:
 
 | Paper | Layout | Figures | Tables | Crop status |
 |---|---|---|---|---|
 | ResNet (`1512.03385`) | 2-column CVPR | 7 / 7 | 14 / 14 | 21 ok · 0 suspect · 0 failed |
 | Transformer (`1706.03762`) | single column | 5 / 5 | 4 / 4 | 9 ok · 0 suspect · 0 failed |
-| Secret Hitler (`2607.28146`) | 2-column, all captions **below** their tables | 5 / 5 | 13 / 13 | 20 ok · 0 suspect · 1 failed |
+| Secret Hitler (`2607.28146`) | 2-column, all captions **below** their tables, one listing split over 2 pages | 5 / 5 | 13 / 13 | 21 ok · 0 suspect · 0 failed |
 | KAN (`2404.19756`, arXiv HTML) | HTML | 25 images | 7 text tables | 32 / 32 containers accounted for |
 
-The one failure is a listing whose body sits on the previous page: an exhibit
-split across a page break has no complete box to crop, and says so rather than
-returning the fragment that happens to share the caption's page.
+That paper's three listings include one whose transcript runs down page 30's
+left column, over into its right column, and two lines onto page 31 — where the
+caption finally appears. It is recovered as three parts and stitched.
 
 ## Use as an agent skill
 
@@ -151,6 +155,11 @@ figures/
 `manifest.json` records, per item: label, kind, page, caption, bbox, column
 layout, how often the body text refers to it, a suggested triage tier, the
 quality status, and the reasons behind it.
+
+An exhibit split across a column or page break also carries `parts`, listing
+every region it was stitched from in reading order. For those items `bbox` is
+only the region on `page` — the one the caption sits on — so read `parts` when
+you need the whole geometry.
 
 ### Triage tiers
 

@@ -83,6 +83,9 @@ Do **not** rely on embedded PDF image extraction alone. Many figures are compose
 5. **Read the `status` field of every entry in `manifest.json`.** Anything marked
    `suspect` or `failed` carries `quality_reasons` explaining what went wrong.
    Do not present a `failed` crop to the user as if it were the figure.
+   An entry with `parts` was stitched from several regions because the exhibit
+   was broken across a column or page break; its `bbox` covers only the piece on
+   `page`, so cite `parts` when the geometry matters.
 6. If a crop is wrong, correct it with `crop --bbox`, starting from the bbox the
    manifest already recorded.
 
