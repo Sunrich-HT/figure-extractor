@@ -67,11 +67,33 @@ class Block:
     multi_span_lines: int
     median_span_gap: float = 0.0
     rotated: bool = False
+    monospace: bool = False
 
     def __iter__(self):
         # Legacy unpacking support: `for rect, text in blocks`.
         yield self.rect
         yield self.text
+
+
+# Family-name markers for fixed-width faces, covering the TeX typewriter fonts
+# (cmtt, lmtt, Inconsolata) as well as the usual screen and code families.
+_MONO_NAME_MARKERS = (
+    "mono", "courier", "consol", "typewriter", "cmtt", "lmtt",
+    "menlo", "firacode", "jetbrains", "sourcecodepro",
+)
+
+
+def _is_monospace(span: dict) -> bool:
+    """Whether a span is set in a fixed-width face.
+
+    PyMuPDF's monospace flag is only as trustworthy as the embedded font
+    descriptor, which TeX pipelines routinely leave unset — Inconsolata arrives
+    with the bit clear — so fall back to the family name.
+    """
+    if span.get("flags", 0) & 8:
+        return True
+    name = (span.get("font") or "").lower()
+    return any(marker in name for marker in _MONO_NAME_MARKERS)
 
 
 def text_blocks(page: fitz.Page) -> list[Block]:
@@ -103,6 +125,8 @@ def text_blocks(page: fitz.Page) -> list[Block]:
         # on the page geometry corrupts every measurement downstream.
         dirs = [tuple(line.get("dir", (1, 0))) for line in lines]
         rotated = bool(dirs) and all(abs(dx) < 0.7 for dx, _ in dirs)
+        spans = [sp for line in lines for sp in (line.get("spans", []) or [])]
+        mono = bool(spans) and sum(_is_monospace(sp) for sp in spans) >= len(spans) * 0.6
         out.append(
             Block(
                 rect=fitz.Rect(b["bbox"]),
@@ -112,6 +136,7 @@ def text_blocks(page: fitz.Page) -> list[Block]:
                 multi_span_lines=sum(1 for c in span_counts if c >= 2),
                 median_span_gap=median_gap,
                 rotated=rotated,
+                monospace=mono,
             )
         )
     return out
@@ -284,6 +309,12 @@ def text_role(block: Block, band_width: float) -> str:
     rect, text = block.rect, block.text
     if len(text) < 60:
         return LABEL
+
+    # A block set in a fixed-width face is code or a transcript — the body of a
+    # listing, never the paper's own prose. Left as PROSE it becomes a barrier
+    # and the listing's crop stops at its own first paragraph.
+    if block.monospace:
+        return TABULAR
 
     # Impossible leading: prose needs roughly 1.2x its font size per line, so a
     # block claiming far more lines than its height allows must be laying them

@@ -112,7 +112,7 @@ def test_zero_thickness_rules_are_not_discarded(tmp_path):
 
 
 class _FakeBlock:
-    def __init__(self, rect, text, n_lines, multi=0, gap=0.0):
+    def __init__(self, rect, text, n_lines, multi=0, gap=0.0, monospace=False):
         self.rect = rect
         self.text = text
         self.n_lines = n_lines
@@ -120,12 +120,23 @@ class _FakeBlock:
         self.multi_span_lines = multi
         self.median_span_gap = gap
         self.rotated = False
+        self.monospace = monospace
 
 
 def test_prose_with_inline_math_is_not_mistaken_for_a_table():
     """Justified prose is split into many spans; that alone must not mean table."""
     block = _FakeBlock(fitz.Rect(50, 100, 288, 200), LOREM, n_lines=8, multi=7, gap=0.3)
     assert text_role(block, band_width=238) == "prose"
+
+
+def test_monospace_prose_is_listing_content_not_a_barrier():
+    """A transcript fills its column like a paragraph, but it is a listing's body.
+
+    Classified as prose it becomes a barrier and the listing's own crop stops at
+    its first paragraph, which is how Listing 4 of arXiv 2607.28146 was lost.
+    """
+    block = _FakeBlock(fitz.Rect(50, 100, 288, 200), LOREM, n_lines=8, monospace=True)
+    assert text_role(block, band_width=238) == "tabular"
 
 
 def test_cells_laid_out_side_by_side_are_a_table():
@@ -146,3 +157,43 @@ def test_scorer_rejects_a_whole_page_crop():
 def test_scorer_reports_failure_when_no_graphics_were_found():
     verdict = assess(fitz.Rect(0, 0, 200, 200), fitz.Rect(0, 0, 612, 792), [], had_graphics=False, band_width=200)
     assert verdict.status == FAILED
+
+
+def _caption_below_table_page(tmp_path):
+    """A table captioned underneath it, with body prose further down the page.
+
+    Reproduces arXiv 2607.28146, where all 13 tables are captioned below and the
+    paragraphs beneath the caption sat a point nearer than the table itself.
+    """
+    pdf = tmp_path / "cap_below.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    # A heading above the table, so its top rule is not the topmost thing on the
+    # page — a full-width hairline up there is discarded as a running header.
+    page.insert_text((60, 76), "4  Results", fontsize=11)
+    page.draw_line(fitz.Point(60, 130), fitz.Point(552, 130))
+    page.insert_text((70, 152), "Model      Overall   Liberal   Fascist", fontsize=9)
+    page.draw_line(fitz.Point(60, 162), fitz.Point(552, 162))
+    page.insert_text((70, 182), "GPT-5.4      81%       82%       80%", fontsize=9)
+    page.insert_text((70, 198), "Kimi K2.5    76%       73%       85%", fontsize=9)
+    page.draw_line(fitz.Point(60, 212), fitz.Point(552, 212))
+    page.insert_text((60, 240), "Table 1: Win rates by role, with the caption set "
+                                "below the tabular as this paper does.", fontsize=9)
+    for i in range(4):
+        page.insert_text((60, 290 + i * 90), LOREM[:220], fontsize=9)
+        page.insert_text((320, 290 + i * 90), LOREM[:220], fontsize=9)
+    doc.save(pdf)
+    doc.close()
+    return pdf
+
+
+def test_table_captioned_below_crops_upward(tmp_path):
+    """The rules decide the side, not the caption-above convention."""
+    pdf = _caption_below_table_page(tmp_path)
+    manifest = extract_pdf_figures(pdf, tmp_path / "out", dpi=72,
+                                   make_sheet=False, make_zip=False)
+    table = next(f for f in manifest["figures"] if f["kind"] == "table")
+    x0, y0, x1, y1 = table["bbox"]
+    assert y1 <= 240, f"crop must stay above the caption, got {table['bbox']}"
+    assert y0 <= 135, f"crop must reach the top rule, got {table['bbox']}"
+    assert table["status"] != FAILED, table.get("quality_reasons")

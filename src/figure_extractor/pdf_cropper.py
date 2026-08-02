@@ -29,6 +29,11 @@ from .quality import assess, suggest_tier
 # Backwards-compatible export: older callers/tests import CAPTION_RE from here.
 from .captions import CAPTION_RE  # noqa: F401
 
+# Exhibits whose body is text rather than graphics: a table's rows, an
+# algorithm's pseudocode, a listing's source lines *are* the content, so looking
+# only for drawings finds nothing to crop and reports a failure that is not one.
+TEXT_BODIED_KINDS = frozenset({"table", "algorithm", "listing", "box"})
+
 # Vertical distance (pt) allowed between two pieces of the same figure.
 MAX_INTERNAL_GAP = 42.0
 # How far from the caption the figure body may start. Generous on purpose: the
@@ -167,6 +172,47 @@ def _match_table(
         if best is None or gap < best[0]:
             best = (gap, r)
     return None if best is None else fitz.Rect(best[1])
+
+
+def _rule_side(
+    primitives: list[fitz.Rect],
+    cap_rect: fitz.Rect,
+    band: Column,
+    window: tuple[float, float],
+) -> str | None:
+    """Which side of the caption the table's own rules sit on, if it has any.
+
+    LaTeX puts ``\\caption`` wherever the author wrote it, so a table caption may
+    sit above or below its rules. Deciding by the gap to the nearest content
+    alone is fragile: a two-column page whose grid was read as one wide column
+    makes the paragraphs underneath look like short labels rather than prose, so
+    they become candidate table content a point or two nearer than the real
+    table. Booktabs rules are unambiguous, so use them when they exist and let
+    the gap decide only when they do not.
+    """
+    y_lo, y_hi = window
+    min_width = max(40.0, band.width * 0.35)
+    above, below = [], []
+    for r in primitives:
+        if r.height > 3.0 or r.width < min_width:
+            continue
+        if not _overlaps_band(r, band) or r.y1 < y_lo - 2 or r.y0 > y_hi + 2:
+            continue
+        if r.y1 <= cap_rect.y0 + 2:
+            above.append(cap_rect.y0 - r.y1)
+        elif r.y0 >= cap_rect.y1 - 2:
+            below.append(r.y0 - cap_rect.y1)
+
+    # A table is bounded by at least a top and a bottom rule; one stray hairline
+    # is more likely a figure's axis than a tabular.
+    up_ok, down_ok = len(above) >= 2, len(below) >= 2
+    if up_ok and not down_ok:
+        return "up"
+    if down_ok and not up_ok:
+        return "down"
+    if up_ok and down_ok:
+        return "up" if min(above) < min(below) else "down"
+    return None
 
 
 def _caption_window(
@@ -390,7 +436,7 @@ def _infer_bbox(
 
     graphics = [r for r in primitives if _in_band(r, band) and _within(r)]
     # Tables are frequently pure text with rules, so their body *is* text.
-    if label.kind in {"table", "algorithm"}:
+    if label.kind in TEXT_BODIED_KINDS:
         content = graphics + [
             b.rect for b in blocks
             if _in_band(b.rect, band)
@@ -402,8 +448,12 @@ def _infer_bbox(
         content = graphics
 
     # Conventional direction first (tables caption-above, figures caption-below),
-    # but fall back to the other side rather than guessing blindly.
-    primary = "down" if label.kind in {"table", "algorithm"} else "up"
+    # but fall back to the other side rather than guessing blindly. Where the
+    # exhibit has rules of its own, they outrank the convention: plenty of papers
+    # caption a table underneath it.
+    primary = "down" if label.kind in TEXT_BODIED_KINDS else "up"
+    if label.kind in TEXT_BODIED_KINDS:
+        primary = _rule_side(primitives, cap_rect, band, window) or primary
     secondary = "up" if primary == "down" else "down"
 
     # Evaluate both sides and let the evidence decide. Committing to the

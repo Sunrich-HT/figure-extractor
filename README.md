@@ -73,7 +73,11 @@ fragments; embedded-image extraction returns pieces. Instead:
    a right-column figure cannot absorb the left column. A caption that spans the
    gutter marks a full-width figure.
 3. **Ownership rules** — a crop may never contain another caption, and content
-   belongs to the caption nearest to it.
+   belongs to the caption nearest to it. Which *side* of a caption its exhibit
+   sits on is read from the exhibit's own rules rather than assumed from the
+   caption-above convention, because many papers caption a table underneath it.
+   Text set in a fixed-width face is a listing's body, not the paper's prose, so
+   it does not act as a barrier.
 4. **High-DPI render and crop** with PyMuPDF (300 dpi default).
 5. **Quality scoring** — every crop is `ok` / `suspect` / `failed` with reasons.
 6. **Contact sheet, manifest, ZIP.**
@@ -97,7 +101,12 @@ against the rendered contact sheets:
 |---|---|---|---|---|
 | ResNet (`1512.03385`) | 2-column CVPR | 7 / 7 | 14 / 14 | 21 ok · 0 suspect · 0 failed |
 | Transformer (`1706.03762`) | single column | 5 / 5 | 4 / 4 | 9 ok · 0 suspect · 0 failed |
+| Secret Hitler (`2607.28146`) | 2-column, all captions **below** their tables | 5 / 5 | 13 / 13 | 20 ok · 0 suspect · 1 failed |
 | KAN (`2404.19756`, arXiv HTML) | HTML | 25 images | 7 text tables | 32 / 32 containers accounted for |
+
+The one failure is a listing whose body sits on the previous page: an exhibit
+split across a page break has no complete box to crop, and says so rather than
+returning the fragment that happens to share the caption's page.
 
 ## Use as an agent skill
 
